@@ -28,6 +28,7 @@
 
     <modelVersion>4.0.0</modelVersion>
     <artifactId>org.wso2.carbon.identity.application.authentication.framework</artifactId>
+    <version>7.8.644</version>
     <packaging>bundle</packaging>
     <name>WSO2 Carbon - Identity Application Authentication Framework</name>
 
@@ -238,6 +239,11 @@
             <groupId>net.minidev</groupId>
             <artifactId>json-smart</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.wso2.carbon.identity.framework</groupId>
+            <artifactId>org.wso2.carbon.identity.chicory.wrapper</artifactId>
+            <version>7.8.644</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -312,6 +318,7 @@
                             org.wso2.carbon.identity.configuration.mgt.core.exception; version="${carbon.identity.package.import.version.range}",
                             org.wso2.carbon.identity.configuration.mgt.core.model; version="${carbon.identity.package.import.version.range}",
                             org.wso2.carbon.identity.role.v2.mgt.core; version="${carbon.identity.package.import.version.range}",
+                            com.dylibso.chicory.*; version="[1.6.1,2.0.0)",
                         </Import-Package>
                         <Export-Package>!org.wso2.carbon.identity.application.authentication.framework.internal,
                             org.wso2.carbon.identity.application.authentication.framework.*;

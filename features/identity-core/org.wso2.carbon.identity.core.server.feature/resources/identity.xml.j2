@@ -1435,8 +1435,29 @@
     Currently we are supporting OpenJDK Nashorn engine("openjdkNashorn") and JDK Nashorn Engine(Default).
     -->
     <AdaptiveAuth>
-   	    <ScriptEngine>{{AdaptiveAuth.ScriptEngine}}</ScriptEngine>
-   	    <LimitScriptEngineCreation>{{AdaptiveAuth.LimitScriptEngineCreation}}</LimitScriptEngineCreation>
+        {% if adaptive_authentication.wasm is defined or AdaptiveAuth.WASM is defined %}
+        <WASM>
+            <Enabled>{{ adaptive_authentication.wasm.enabled if adaptive_authentication.wasm is defined and adaptive_authentication.wasm.enabled is defined else (AdaptiveAuth.WASM.Enabled if AdaptiveAuth.WASM is defined and AdaptiveAuth.WASM.Enabled is defined else 'true') }}</Enabled>
+            <MemoryLimitMB>{{ adaptive_authentication.wasm.memory_limit_mb if adaptive_authentication.wasm is defined and adaptive_authentication.wasm.memory_limit_mb is defined else (AdaptiveAuth.WASM.MemoryLimitMB if AdaptiveAuth.WASM is defined and AdaptiveAuth.WASM.MemoryLimitMB is defined else 128) }}</MemoryLimitMB>
+            <CPUTimeLimitMS>{{ adaptive_authentication.wasm.cpu_time_limit_ms if adaptive_authentication.wasm is defined and adaptive_authentication.wasm.cpu_time_limit_ms is defined else (AdaptiveAuth.WASM.CPUTimeLimitMS if AdaptiveAuth.WASM is defined and AdaptiveAuth.WASM.CPUTimeLimitMS is defined else 5000) }}</CPUTimeLimitMS>
+            <StatementLimit>{{ adaptive_authentication.wasm.statement_limit if adaptive_authentication.wasm is defined and adaptive_authentication.wasm.statement_limit is defined else (AdaptiveAuth.WASM.StatementLimit if AdaptiveAuth.WASM is defined and AdaptiveAuth.WASM.StatementLimit is defined else 100000) }}</StatementLimit>
+        </WASM>
+        {% endif %}
+        
+        <!-- DEBUG: snake_case wasm.enabled: {{ adaptive_authentication.wasm.enabled if adaptive_authentication.wasm is defined }} -->
+        <!-- DEBUG: PascalCase WASM.Enabled: {{ AdaptiveAuth.WASM.Enabled if AdaptiveAuth.WASM is defined }} -->
+        <!-- DEBUG: snake_case script_engine: {{ adaptive_authentication.script_engine if adaptive_authentication.script_engine is defined }} -->
+        <!-- DEBUG: PascalCase ScriptEngine: {{ AdaptiveAuth.ScriptEngine }} -->
+        
+        {% if adaptive_authentication.script_engine is defined %}
+        <ScriptEngine>{{ adaptive_authentication.script_engine }}</ScriptEngine>
+        {% elif AdaptiveAuth.ScriptEngine is defined %}
+        <ScriptEngine>{{ AdaptiveAuth.ScriptEngine }}</ScriptEngine>
+        {% else %}
+        <ScriptEngine>graaljs</ScriptEngine>
+        {% endif %}
+        
+        <LimitScriptEngineCreation>{{ adaptive_authentication.limit_script_engine_creation if adaptive_authentication.limit_script_engine_creation is defined else AdaptiveAuth.LimitScriptEngineCreation }}</LimitScriptEngineCreation>
     </AdaptiveAuth>
 
     <MultifactorAuthentication>
