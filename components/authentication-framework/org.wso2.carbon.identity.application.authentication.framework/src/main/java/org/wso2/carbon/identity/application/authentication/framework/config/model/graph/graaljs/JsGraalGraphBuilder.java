@@ -49,7 +49,9 @@ import org.wso2.carbon.identity.application.authentication.framework.internal.Fr
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -76,7 +78,8 @@ import static org.wso2.carbon.identity.application.authentication.framework.util
  * Translate the authentication graph config to runtime model.
  * This is not thread safe. Should be discarded after each build.
  * <p>
- * Since Nashorn is deprecated in JDK 11 and onwards. We are introducing GraalJS engine.
+ * Since Nashorn is deprecated in JDK 11 and onwards. We are introducing GraalJS
+ * engine.
  */
 public class JsGraalGraphBuilder extends JsGraphBuilder {
 
@@ -99,29 +102,31 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
      * Constructs the builder with the given authentication context.
      *
      * @param authenticationContext current authentication context.
-     * @param stepConfigMap         The Step map from the service provider configuration.
+     * @param stepConfigMap         The Step map from the service provider
+     *                              configuration.
      * @param context               Polyglot Context.
      */
     public JsGraalGraphBuilder(AuthenticationContext authenticationContext, Map<Integer, StepConfig> stepConfigMap,
-                               Context context) {
+            Context context) {
 
         this.authenticationContext = authenticationContext;
         this.context = context;
         stepNamedMap = stepConfigMap.entrySet()
-                        .stream()
-                        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+                .stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     /**
      * Constructs the builder with the given authentication context.
      *
      * @param authenticationContext current authentication context.
-     * @param stepConfigMap         The Step map from the service provider configuration.
+     * @param stepConfigMap         The Step map from the service provider
+     *                              configuration.
      * @param context               polyglot context.
      * @param currentNode           Current authentication graph node.
      */
     public JsGraalGraphBuilder(AuthenticationContext authenticationContext, Map<Integer, StepConfig> stepConfigMap,
-                               Context context, AuthGraphNode currentNode) {
+            Context context, AuthGraphNode currentNode) {
 
         this.authenticationContext = authenticationContext;
         this.context = context;
@@ -139,73 +144,219 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     @Override
     public JsGraalGraphBuilder createWith(String script) {
 
+        // =====================================================================
+        // POC: External GraalJS Sidecar Integration
+        // Instead of running GraalJS locally, we call the external sidecar
+        // and process the returned commands.
+        // =====================================================================
+
         try {
             currentBuilder.set(this);
-            Value bindings = context.getBindings(POLYGLOT_LANGUAGE);
 
-            bindings.putMember(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuter());
-            bindings.putMember(JS_FUNC_SEND_ERROR, new SendErrorFunctionImpl());
-            bindings.putMember(JS_FUNC_SHOW_PROMPT, new JsGraalPromptExecutorImpl());
-            bindings.putMember(JS_FUNC_LOAD_FUNC_LIB, new JsGraalLoadExecutorImpl());
-            bindings.putMember(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
-            JsFunctionRegistry jsFunctionRegistrar = FrameworkServiceDataHolder.getInstance().getJsFunctionRegistry();
-            if (jsFunctionRegistrar != null) {
-                Map<String, Object> functionMap =
-                        jsFunctionRegistrar.getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
-                functionMap.forEach(bindings::putMember);
+            // POC: Log to verify we're using the sidecar path
+            log.info("POC: Using external GraalJS sidecar for script evaluation");
+
+            // Call the remote GraalJS sidecar
+            RemoteJsEvaluator evaluator = RemoteJsEvaluator.getInstance();
+            RemoteJsEvaluator.EvalResult evalResult = evaluator.evaluate(script, JS_FUNC_ON_LOGIN_REQUEST);
+
+            if (!evalResult.success) {
+                log.error("Script evaluation failed on sidecar: " + evalResult.error);
+                result.setBuildSuccessful(false);
+                result.setErrorReason("Error in executing the Javascript via sidecar: " + evalResult.error);
+                return this;
             }
-            currentBuilder.set(this);
-            context.eval(Source
-                    .newBuilder(POLYGLOT_LANGUAGE,
-                            FrameworkServiceDataHolder.getInstance().getCodeForRequireFunction(),
-                            POLYGLOT_SOURCE)
-                    .build());
-            context.eval(Source
-                    .newBuilder(POLYGLOT_LANGUAGE,
-                            FrameworkServiceDataHolder.getInstance().getCodeForSecretsFunction(),
-                            POLYGLOT_SOURCE)
-                    .build());
 
-            String identifier = UUID.randomUUID().toString();
-            Optional<JSExecutionMonitorData> optionalScriptExecutionData;
-
-            try {
-                startScriptExecutionMonitor(identifier, authenticationContext);
-                context.eval(Source.newBuilder(POLYGLOT_LANGUAGE, script, POLYGLOT_SOURCE).build());
-
-                Value onLoginRequestFn = bindings.getMember(JS_FUNC_ON_LOGIN_REQUEST);
-                if (onLoginRequestFn == null) {
-                    log.error("Could not find the entry function " + JS_FUNC_ON_LOGIN_REQUEST + " \n" + script);
-                    result.setBuildSuccessful(false);
-                    result.setErrorReason("Error in executing the Javascript. " + JS_FUNC_ON_LOGIN_REQUEST +
-                            " function is not defined.");
-                    return this;
-                }
-                onLoginRequestFn.executeVoid(new JsGraalAuthenticationContext(authenticationContext));
-            } finally {
-                optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
+            // Process commands returned from sidecar
+            for (RemoteJsEvaluator.Command cmd : evalResult.commands) {
+                processRemoteCommand(cmd);
             }
-            optionalScriptExecutionData.ifPresent(
-                    scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
-                            scriptExecutionData));
-            JsGraalGraphBuilderFactory.persistCurrentContext(authenticationContext, context);
-        } catch (PolyglotException e) {
+
+            // POC: Persist bindings from sidecar to AuthenticationContext
+            // This allows script-defined variables (like rolesToStepUp) to be available
+            // when callbacks execute via restoreCurrentContext()
+            if (evalResult.bindings != null && !evalResult.bindings.isEmpty()) {
+                // Use literal string since JS_BINDING_CURRENT_CONTEXT is private in Factory
+                authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", evalResult.bindings);
+                log.info("POC: Persisted " + evalResult.bindings.size() + " bindings from sidecar");
+            }
+
+            /*
+             * =====================================================================
+             * ORIGINAL LOCAL GRAALJS CODE (commented out for PoC)
+             * =====================================================================
+             *
+             * Value bindings = context.getBindings(POLYGLOT_LANGUAGE);
+             * 
+             * bindings.putMember(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuter());
+             * bindings.putMember(JS_FUNC_SEND_ERROR, new SendErrorFunctionImpl());
+             * bindings.putMember(JS_FUNC_SHOW_PROMPT, new JsGraalPromptExecutorImpl());
+             * bindings.putMember(JS_FUNC_LOAD_FUNC_LIB, new JsGraalLoadExecutorImpl());
+             * bindings.putMember(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
+             * JsFunctionRegistry jsFunctionRegistrar =
+             * FrameworkServiceDataHolder.getInstance().getJsFunctionRegistry();
+             * if (jsFunctionRegistrar != null) {
+             * Map<String, Object> functionMap =
+             * jsFunctionRegistrar.getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.
+             * SEQUENCE_HANDLER);
+             * functionMap.forEach(bindings::putMember);
+             * }
+             * currentBuilder.set(this);
+             * context.eval(Source
+             * .newBuilder(POLYGLOT_LANGUAGE,
+             * FrameworkServiceDataHolder.getInstance().getCodeForRequireFunction(),
+             * POLYGLOT_SOURCE)
+             * .build());
+             * context.eval(Source
+             * .newBuilder(POLYGLOT_LANGUAGE,
+             * FrameworkServiceDataHolder.getInstance().getCodeForSecretsFunction(),
+             * POLYGLOT_SOURCE)
+             * .build());
+             * 
+             * String identifier = UUID.randomUUID().toString();
+             * Optional<JSExecutionMonitorData> optionalScriptExecutionData;
+             * 
+             * try {
+             * startScriptExecutionMonitor(identifier, authenticationContext);
+             * context.eval(Source.newBuilder(POLYGLOT_LANGUAGE, script,
+             * POLYGLOT_SOURCE).build());
+             * 
+             * Value onLoginRequestFn = bindings.getMember(JS_FUNC_ON_LOGIN_REQUEST);
+             * if (onLoginRequestFn == null) {
+             * log.error("Could not find the entry function " + JS_FUNC_ON_LOGIN_REQUEST +
+             * " \n" + script);
+             * result.setBuildSuccessful(false);
+             * result.setErrorReason("Error in executing the Javascript. " +
+             * JS_FUNC_ON_LOGIN_REQUEST +
+             * " function is not defined.");
+             * return this;
+             * }
+             * onLoginRequestFn.executeVoid(new
+             * JsGraalAuthenticationContext(authenticationContext));
+             * } finally {
+             * optionalScriptExecutionData =
+             * Optional.ofNullable(endScriptExecutionMonitor(identifier));
+             * }
+             * optionalScriptExecutionData.ifPresent(
+             * scriptExecutionData ->
+             * storeAuthScriptExecutionMonitorData(authenticationContext,
+             * scriptExecutionData));
+             * JsGraalGraphBuilderFactory.persistCurrentContext(authenticationContext,
+             * context);
+             *
+             * END OF ORIGINAL CODE
+             * =====================================================================
+             */
+
+        } catch (Exception e) {
             result.setBuildSuccessful(false);
-            result.setErrorReason(
-                    "Error in executing the Javascript. " + JS_FUNC_ON_LOGIN_REQUEST + " reason, " + e.getMessage());
+            result.setErrorReason("Error in executing the Javascript via sidecar: " + e.getMessage());
             if (log.isDebugEnabled()) {
-                log.debug("Error in executing the Javascript.", e);
-            }
-        } catch (IOException e) {
-            result.setBuildSuccessful(false);
-            result.setErrorReason("Error in building  the Javascript source" + e.getMessage());
-            if (log.isDebugEnabled()) {
-                log.debug("Error in building the Javascript source", e);
+                log.debug("Error in executing the Javascript via sidecar.", e);
             }
         } finally {
             clearCurrentBuilder(context);
         }
         return this;
+    }
+
+    /**
+     * Process a command received from the remote GraalJS sidecar.
+     *
+     * @param cmd The command to process.
+     */
+    private void processRemoteCommand(RemoteJsEvaluator.Command cmd) {
+        if (cmd == null || cmd.type == null) {
+            return;
+        }
+
+        // Parse callbacks from options JSON
+        cmd.parseCallbacks();
+
+        if (log.isDebugEnabled()) {
+            log.debug("Processing remote command: " + cmd);
+        }
+
+        switch (cmd.type) {
+            case "executeStep":
+                // Build step node using the existing infrastructure
+                executeStepFromRemote(cmd);
+                break;
+            case "sendError":
+                // Create a fail node
+                FailNode failNode = new FailNode();
+                if (cmd.url != null) {
+                    failNode.setErrorPageUri(cmd.url);
+                }
+                if (this.currentNode == null) {
+                    this.result.setStartNode(failNode);
+                } else {
+                    attachToLeaf(this.currentNode, failNode);
+                }
+                this.currentNode = failNode;
+                break;
+            case "fail":
+                FailNode fail = new FailNode();
+                fail.setErrorPageUri("authenticationendpoint/retry.do");
+                if (this.currentNode == null) {
+                    this.result.setStartNode(fail);
+                } else {
+                    attachToLeaf(this.currentNode, fail);
+                }
+                this.currentNode = fail;
+                break;
+            default:
+                log.warn("Unknown command type from sidecar: " + cmd.type);
+        }
+    }
+
+    /**
+     * Execute a step based on command from sidecar.
+     *
+     * @param cmd The command containing step info and callbacks.
+     */
+    private void executeStepFromRemote(RemoteJsEvaluator.Command cmd) {
+        StepConfig stepConfig = stepNamedMap.get(cmd.stepId);
+        if (stepConfig == null) {
+            log.error("Step with id " + cmd.stepId + " not found in step map");
+            return;
+        }
+
+        StepConfigGraphNode newNode = wrap(stepConfig);
+        if (this.currentNode == null) {
+            this.result.setStartNode(newNode);
+        } else {
+            attachToLeaf(this.currentNode, newNode);
+        }
+        this.currentNode = newNode;
+
+        // Attach event listeners if callbacks are present
+        if (cmd.onSuccessSource != null || cmd.onFailSource != null) {
+            DynamicDecisionNode decisionNode = new DynamicDecisionNode();
+
+            if (cmd.onSuccessSource != null) {
+                // Create a serializable function from the callback source
+                GraalSerializableJsFunction successFn = new GraalSerializableJsFunction(
+                        cmd.onSuccessSource, false);
+                decisionNode.addGenericFunction("onSuccess", successFn);
+                log.info("POC: Attached onSuccess callback for step " + cmd.stepId);
+            }
+
+            if (cmd.onFailSource != null) {
+                GraalSerializableJsFunction failFn = new GraalSerializableJsFunction(
+                        cmd.onFailSource, false);
+                decisionNode.addGenericFunction("onFail", failFn);
+                log.info("POC: Attached onFail callback for step " + cmd.stepId);
+            }
+
+            attachToLeaf(newNode, decisionNode);
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("Processed executeStep command for step " + cmd.stepId +
+                    " with callbacks: onSuccess=" + (cmd.onSuccessSource != null) +
+                    ", onFail=" + (cmd.onFailSource != null));
+        }
     }
 
     @Override
@@ -242,7 +393,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     /**
      * Adds all the event listeners to the decision node.
      *
-     * @param eventsMap Map of events and event handler functions, which is handled by this execution.
+     * @param eventsMap Map of events and event handler functions, which is handled
+     *                  by this execution.
      * @return created Dynamic Decision node.
      */
     private static void addEventListeners(DynamicDecisionNode decisionNode, Map<String, Object> eventsMap) {
@@ -353,7 +505,6 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         }
     }
 
-
     /**
      * Executes the given script in an async event.
      */
@@ -392,7 +543,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     @SuppressWarnings("unchecked")
     @Override
     public void addPromptInternal(String templateId, Map<String, Object> parameters, Map<String, Object> handlers,
-                                  Map<String, Object> callbacks) {
+            Map<String, Object> callbacks) {
 
         ShowPromptNode newNode = new ShowPromptNode();
         newNode.setTemplateId(templateId);
@@ -446,7 +597,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         }
         currentNode = newNode;
         if (params.length > 0) {
-            // if there are any params provided, last one is assumed to be the event listeners
+            // if there are any params provided, last one is assumed to be the event
+            // listeners
             if (params[params.length - 1] instanceof Map) {
                 attachEventListeners((Map<String, Object>) params[params.length - 1]);
             } else {
@@ -475,7 +627,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     /**
-     * Handle options within executeStepInAsyncEvent function. This method will update step configs through context.
+     * Handle options within executeStepInAsyncEvent function. This method will
+     * update step configs through context.
      *
      * @param options       Map of authenticator options.
      * @param stepConfig    Current stepConfig.
@@ -484,7 +637,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     @Override
     @SuppressWarnings("unchecked")
     protected void handleOptionsAsyncEvent(Map<String, Object> options, StepConfig stepConfig,
-                                           Map<Integer, StepConfig> stepConfigMap) {
+            Map<Integer, StepConfig> stepConfigMap) {
 
         Object authenticationOptionsObj = options.get(AUTHENTICATION_OPTIONS);
         if (authenticationOptionsObj instanceof List) {
@@ -530,7 +683,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     /**
-     * Implementation of the SendErrorFunction interface as an adaptor for sendErrorAsync function.
+     * Implementation of the SendErrorFunction interface as an adaptor for
+     * sendErrorAsync function.
      */
     public static class SendErrorAsyncFunctionImpl implements SendErrorFunction {
 
@@ -541,7 +695,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     /**
-     * Implementation of the SendErrorFunction interface as an adaptor for sendError function.
+     * Implementation of the SendErrorFunction interface as an adaptor for sendError
+     * function.
      */
     public class SendErrorFunctionImpl implements SendErrorFunction {
 
@@ -550,13 +705,15 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             JsGraalGraphBuilder.this.sendError(url, parameterMap);
         }
     }
+
     private static FailNode createFailNode(String url, Map<String, Object> parameterMap, boolean isShowErrorPage) {
 
         FailNode failNode = new FailNode();
         if (isShowErrorPage && StringUtils.isNotBlank(url)) {
             failNode.setErrorPageUri(url);
         }
-        // setShowErrorPage is set to true as sendError function redirects to a specific error page.
+        // setShowErrorPage is set to true as sendError function redirects to a specific
+        // error page.
         failNode.setShowErrorPage(isShowErrorPage);
 
         parameterMap.forEach((key, value) -> failNode.getFailureData().put(key, String.valueOf(value)));
@@ -565,7 +722,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
 
     /**
      * Javascript based Decision Evaluator implementation.
-     * This is used to create the Authentication Graph structure dynamically on the fly while the authentication flow
+     * This is used to create the Authentication Graph structure dynamically on the
+     * fly while the authentication flow
      * is happening.
      * The graph is re-organized based on last execution of the decision.
      */
@@ -593,50 +751,72 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             }
             try {
                 currentBuilder.set(graphBuilder);
-                JsGraalGraphBuilderFactory.restoreCurrentContext(authenticationContext, context);
-                Context context = getContext();
-                Value bindings = context.getBindings(POLYGLOT_LANGUAGE);
 
-                bindings.putMember(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuterInAsyncEvent());
-                bindings.putMember(JS_FUNC_SEND_ERROR, new SendErrorAsyncFunctionImpl());
-                bindings.putMember(JS_AUTH_FAILURE, new FailAuthenticationFunctionImpl());
-                bindings.putMember(JS_FUNC_SHOW_PROMPT, new JsGraalPromptExecutorImpl());
-                bindings.putMember(JS_FUNC_LOAD_FUNC_LIB, new JsGraalLoadExecutorImpl());
-                bindings.putMember(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
-                /*
-                TODO: Need to improve the JsSerializable implementation to persist this function in the context
-                 without re-evaluating.
-                 */
-                context.eval(Source
-                        .newBuilder(POLYGLOT_LANGUAGE,
-                                FrameworkServiceDataHolder.getInstance().getCodeForSecretsFunction(),
-                                POLYGLOT_SOURCE)
-                        .build());
-                JsFunctionRegistry jsFunctionRegistrar =
-                        FrameworkServiceDataHolder.getInstance().getJsFunctionRegistry();
-                if (jsFunctionRegistrar != null) {
-                    Map<String, Object> functionMap =
-                            jsFunctionRegistrar.getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
-                    functionMap.forEach(bindings::putMember);
+                // POC: Execute callback on sidecar instead of locally
+                log.info("POC: Executing callback on sidecar...");
+
+                // Build context data for sidecar
+                RemoteJsEvaluator.CallbackContextData contextData = new RemoteJsEvaluator.CallbackContextData();
+
+                // Get user info from authenticationContext
+                if (authenticationContext.getSubject() != null) {
+                    contextData.setUsername(authenticationContext.getSubject().getUserName());
+                    contextData.setUserStoreDomain(authenticationContext.getSubject().getUserStoreDomain());
+
+                    // Get user roles (this is simplified - in real impl would query user store)
+                    List<String> roles = new ArrayList<>();
+                    try {
+                        // Try to get roles from session context
+                        Object rolesObj = authenticationContext.getProperty("__user_roles__");
+                        if (rolesObj instanceof List) {
+                            roles = (List<String>) rolesObj;
+                        }
+                    } catch (Exception e) {
+                        log.debug("Could not get user roles from context", e);
+                    }
+                    // Fallback: check for common roles based on username for POC
+                    if (roles.isEmpty()) {
+                        String username = authenticationContext.getSubject().getUserName();
+                        if (username != null) {
+                            if (username.startsWith("admin"))
+                                roles.add("admin");
+                            if (username.startsWith("manager"))
+                                roles.add("manager");
+                        }
+                    }
+                    contextData.setRoles(roles);
                 }
-                removeDefaultFunctions(context);
-                JsGraalGraphBuilder.contextForJs.set(authenticationContext);
+                contextData.setCurrentStep(authenticationContext.getCurrentStep());
 
-                String identifier = UUID.randomUUID().toString();
-                Optional<JSExecutionMonitorData> optionalScriptExecutionData =
-                        Optional.ofNullable(retrieveAuthScriptExecutionMonitorData(authenticationContext));
-                try {
-                    startScriptExecutionMonitor(identifier, authenticationContext,
-                            optionalScriptExecutionData.orElse(null));
-                    result = jsFunction.apply(context, params);
-                } finally {
-                    optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
+                // Get persisted bindings
+                @SuppressWarnings("unchecked")
+                Map<String, Object> bindings = (Map<String, Object>) authenticationContext
+                        .getProperty("JS_BINDING_CURRENT_CONTEXT");
+                if (bindings == null) {
+                    bindings = new HashMap<>();
                 }
-                optionalScriptExecutionData.ifPresent(
-                        scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
-                                scriptExecutionData));
 
-                JsGraalGraphBuilderFactory.persistCurrentContext(authenticationContext, context);
+                // Call sidecar
+                RemoteJsEvaluator evaluator = RemoteJsEvaluator.getInstance();
+                RemoteJsEvaluator.EvalResult evalResult = evaluator.executeCallback(
+                        jsFunction.getSource(), bindings, contextData);
+
+                if (!evalResult.success) {
+                    log.error("POC: Callback execution failed on sidecar: " + evalResult.error);
+                    throw new RuntimeException("Callback execution failed: " + evalResult.error);
+                }
+
+                log.info("POC: Callback executed on sidecar, got " + evalResult.commands.size() + " commands");
+
+                // Process commands from sidecar
+                for (RemoteJsEvaluator.Command cmd : evalResult.commands) {
+                    processRemoteCommand(cmd);
+                }
+
+                // Update bindings
+                if (evalResult.bindings != null && !evalResult.bindings.isEmpty()) {
+                    authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", evalResult.bindings);
+                }
 
                 AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
                 if (canInfuse(executingNode)) {
@@ -644,7 +824,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 }
 
             } catch (Throwable e) {
-                //We need to catch all the javascript errors here, then log and handle.
+                // We need to catch all the javascript errors here, then log and handle.
                 log.error("Error in executing the javascript for service provider : " +
                         authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
                         jsFunction.getSource(), e);
@@ -759,7 +939,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     private void storeAuthScriptExecutionMonitorData(AuthenticationContext context,
-                                                     JSExecutionMonitorData jsExecutionMonitorData) {
+            JSExecutionMonitorData jsExecutionMonitorData) {
 
         context.setProperty(PROP_EXECUTION_SUPERVISOR_RESULT, jsExecutionMonitorData);
     }
@@ -777,7 +957,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     private void startScriptExecutionMonitor(String identifier, AuthenticationContext context,
-                                             JSExecutionMonitorData previousExecutionResult) {
+            JSExecutionMonitorData previousExecutionResult) {
 
         JSExecutionSupervisor jsExecutionSupervisor = getJSExecutionSupervisor();
         if (jsExecutionSupervisor == null) {
