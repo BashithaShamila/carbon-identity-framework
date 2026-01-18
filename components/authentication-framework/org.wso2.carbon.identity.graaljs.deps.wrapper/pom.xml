@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright (c) 2026, WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+  ~
+  ~ WSO2 LLC. licenses this file to you under the Apache License,
+  ~ Version 2.0 (the "License"); you may not use this file except
+  ~ in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~ http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing,
+  ~ software distributed under the License is distributed on an
+  ~ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  ~ KIND, either express or implied.  See the License for the
+  ~ specific language governing permissions and limitations
+  ~ under the License.
+  -->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <parent>
+        <groupId>org.wso2.carbon.identity.framework</groupId>
+        <artifactId>authentication-framework</artifactId>
+        <version>7.8.644</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <modelVersion>4.0.0</modelVersion>
+    <artifactId>org.wso2.carbon.identity.graaljs.deps.wrapper</artifactId>
+    <packaging>jar</packaging>
+    <name>WSO2 Carbon - GraalJS Dependencies Wrapper Bundle</name>
+    <description>OSGi bundle wrapper for GraalJS sidecar dependencies (junixsocket, protobuf)</description>
+
+    <dependencies>
+        <!-- junixsocket for UDS communication with GraalJS sidecar -->
+        <dependency>
+            <groupId>com.kohlschutter.junixsocket</groupId>
+            <artifactId>junixsocket-common</artifactId>
+            <version>2.9.1</version>
+        </dependency>
+        <!-- junixsocket native libraries - required for actual UDS functionality -->
+        <dependency>
+            <groupId>com.kohlschutter.junixsocket</groupId>
+            <artifactId>junixsocket-native-common</artifactId>
+            <version>2.9.1</version>
+        </dependency>
+        
+        <!-- Protocol Buffers for sidecar communication -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>3.21.12</version>
+        </dependency>
+        
+        <!-- Logging -->
+        <dependency>
+            <groupId>org.ops4j.pax.logging</groupId>
+            <artifactId>pax-logging-api</artifactId>
+        </dependency>
+        
+        <!-- OSGi framework -->
+        <dependency>
+            <groupId>org.wso2.eclipse.osgi</groupId>
+            <artifactId>org.eclipse.osgi.services</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.osgi</groupId>
+            <artifactId>org.eclipse.osgi</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Use shade plugin to merge all dependencies first -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <includes>
+                                    <include>com.kohlschutter.junixsocket:junixsocket-common</include>
+                                    <include>com.kohlschutter.junixsocket:junixsocket-native-common</include>
+                                    <include>com.google.protobuf:protobuf-java</include>
+                                </includes>
+                            </artifactSet>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/MANIFEST.MF</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <manifestEntries>
+                                        <Bundle-SymbolicName>${project.artifactId}</Bundle-SymbolicName>
+                                        <Bundle-Name>${project.artifactId}</Bundle-Name>
+                                        <Bundle-Version>${project.version}</Bundle-Version>
+                                        <Bundle-ManifestVersion>2</Bundle-ManifestVersion>
+                                        <Export-Package>org.newsclub.net.unix;version="2.9.1",org.newsclub.net.unix.pool;version="2.9.1",com.google.protobuf;version="3.21.12",com.google.protobuf.compiler;version="3.21.12"</Export-Package>
+                                        <Import-Package>javax.net;resolution:=optional,javax.net.ssl;resolution:=optional,sun.misc;resolution:=optional,sun.nio.ch;resolution:=optional</Import-Package>
+                                        <DynamicImport-Package>*</DynamicImport-Package>
+                                        <Multi-Release>true</Multi-Release>
+                                        <Bundle-ActivationPolicy>lazy</Bundle-ActivationPolicy>
+                                        <Bundle-NativeCode>lib/aarch64-MacOSX-clang/jni/libjunixsocket-native-2.9.1.dylib;osname=macosx;processor=aarch64,lib/x86_64-MacOSX-clang/jni/libjunixsocket-native-2.9.1.dylib;osname=macosx;processor=x86_64,lib/amd64-Linux-clang/jni/libjunixsocket-native-2.9.1.so;osname=linux;processor=amd64,lib/aarch64-Linux-clang/jni/libjunixsocket-native-2.9.1.so;osname=linux;processor=aarch64,*</Bundle-NativeCode>
+                                    </manifestEntries>
+                                </transformer>
+                                <!-- Include native library resources -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                                    <resource>lib</resource>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.felix</groupId>
+                <artifactId>maven-bundle-plugin</artifactId>
+                <extensions>true</extensions>
+                <executions>
+                    <execution>
+                        <id>default-bundle</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

@@ -29,6 +29,9 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsBaseGraphBuilder;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericGraphBuilderFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericSerializer;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.HostCallbackServer;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngine;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngineFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.AbstractJSObjectWrapper;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticatedUser;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticationContext;
@@ -53,19 +56,42 @@ import static org.wso2.carbon.identity.application.authentication.framework.util
 
 /**
  * Factory to create a Javascript based sequence builder.
- * This factory is there to reuse of GraalJS Polyglot Context and any related expensive objects.
+ * This factory is there to reuse of GraalJS Polyglot Context and any related
+ * expensive objects.
  * <p>
- * Since Nashorn is deprecated in JDK 11 and onwards. We are introducing GraalJS engine.
+ * Since Nashorn is deprecated in JDK 11 and onwards. We are introducing GraalJS
+ * engine.
  */
 public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<Context> {
 
     private static final Log LOG = LogFactory.getLog(JsGraalGraphBuilderFactory.class);
     private static final String JS_BINDING_CURRENT_CONTEXT = "JS_BINDING_CURRENT_CONTEXT";
     private int javascriptResourceLimit = 0;
+    private JsEngineFactory jsEngineFactory;
 
     public void init() {
 
         setJavascriptResourceLimit();
+        initializeEngineFactory();
+    }
+
+    /**
+     * Initialize the JS engine factory and callback server.
+     * This sets up the infrastructure for remote JS execution if enabled.
+     */
+    private void initializeEngineFactory() {
+        // Initialize the JsEngineFactory with our statement limit
+        jsEngineFactory = JsEngineFactory.getInstance();
+        jsEngineFactory.setStatementLimit(javascriptResourceLimit);
+
+        // Initialize the host callback server for remote mode
+        // This will be used when sidecar needs to call back to IS for host functions
+        if (jsEngineFactory.getDefaultMode() == JsEngineFactory.ExecutionMode.REMOTE) {
+            HostCallbackServer.getInstance();
+            LOG.info("GraalJS engine abstraction initialized in REMOTE mode");
+        } else {
+            LOG.info("GraalJS engine abstraction initialized in LOCAL mode");
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -89,18 +115,33 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
 
         Value engineBindings = context.getBindings(POLYGLOT_LANGUAGE);
         Map<String, Object> persistableMap = new HashMap<>();
+        LOG.info("[persistCurrentContext] Starting to persist bindings for SP: " +
+                (authContext != null ? authContext.getServiceProviderName() : "null") +
+                ", contextId: " + (authContext != null ? authContext.getContextIdentifier() : "null"));
+
         engineBindings.getMemberKeys().forEach((key) -> {
             Value binding = engineBindings.getMember(key);
             /*
-             * Since, we don't have a difference between global and engine scopes, we need to identify what are the
-             * custom functions and the logger object we added bindings to, and not persist them since we will anyways
+             * Since, we don't have a difference between global and engine scopes, we need
+             * to identify what are the
+             * custom functions and the logger object we added bindings to, and not persist
+             * them since we will anyways
              * bind them again.
-             * The functions will be host objects and can be executed. The Logger object needs to be identified by name.
+             * The functions will be host objects and can be executed. The Logger object
+             * needs to be identified by name.
              */
             if (!((binding.isHostObject() && binding.canExecute()) || key.equals("Log"))) {
-                persistableMap.put(key, GraalSerializer.getInstance().toJsSerializable(binding));
+                Object serialized = GraalSerializer.getInstance().toJsSerializable(binding);
+                persistableMap.put(key, serialized);
+                LOG.info("[persistCurrentContext] Persisted binding: " + key + " = " +
+                        (serialized != null ? serialized.getClass().getSimpleName() + ": " + serialized : "null"));
+            } else {
+                LOG.debug("[persistCurrentContext] Skipping binding: " + key + " (host function or Log)");
             }
         });
+
+        LOG.info("[persistCurrentContext] Total bindings persisted: " + persistableMap.size() +
+                ", keys: " + persistableMap.keySet());
         authContext.setProperty(JS_BINDING_CURRENT_CONTEXT, persistableMap);
     }
 
@@ -128,8 +169,10 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
     public HostAccess getHostAccess() {
 
         /*
-         * We need to map the graaljs proxy objects be exposed as their abstract classes to be able to use the current
-         * functional interfaces we have for existing conditional authentication functions.
+         * We need to map the graaljs proxy objects be exposed as their abstract classes
+         * to be able to use the current
+         * functional interfaces we have for existing conditional authentication
+         * functions.
          */
         return HostAccess.newBuilder(HostAccess.EXPLICIT)
                 .allowListAccess(true)
@@ -164,23 +207,47 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
     }
 
     public JsGraalGraphBuilder createBuilder(AuthenticationContext authenticationContext,
-                                             Map<Integer, StepConfig> stepConfigMap) {
+            Map<Integer, StepConfig> stepConfigMap) {
 
         return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, createEngine(authenticationContext));
     }
 
     public JsGraalGraphBuilder createBuilder(AuthenticationContext authenticationContext,
-                                             Map<Integer, StepConfig> stepConfigMap, AuthGraphNode currentNode) {
+            Map<Integer, StepConfig> stepConfigMap, AuthGraphNode currentNode) {
 
         return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, createEngine(authenticationContext),
                 currentNode);
     }
 
+    /**
+     * Get the JsEngineFactory instance.
+     * This can be used to create JsEngine instances for remote or local execution.
+     *
+     * @return The JsEngineFactory instance.
+     */
+    public JsEngineFactory getJsEngineFactory() {
+        return jsEngineFactory;
+    }
+
+    /**
+     * Create a JsEngine for the given authentication context.
+     * The engine type (local or remote) is determined by the factory's
+     * configuration.
+     *
+     * @param authenticationContext The authentication context.
+     * @return A JsEngine instance.
+     */
+    public JsEngine createJsEngine(AuthenticationContext authenticationContext) {
+        return jsEngineFactory.createEngine(authenticationContext);
+    }
+
     private void setJavascriptResourceLimit() {
 
         /*
-         * This sets the number of javascript statements that can be executed in a single execution.
-         * The default value is set to 0 which is equivalent to unlimited number of statement.
+         * This sets the number of javascript statements that can be executed in a
+         * single execution.
+         * The default value is set to 0 which is equivalent to unlimited number of
+         * statement.
          */
         String statementLimit = IdentityUtil.getProperty(GRAALJS_SCRIPT_STATEMENTS_LIMIT);
         if (statementLimit != null) {

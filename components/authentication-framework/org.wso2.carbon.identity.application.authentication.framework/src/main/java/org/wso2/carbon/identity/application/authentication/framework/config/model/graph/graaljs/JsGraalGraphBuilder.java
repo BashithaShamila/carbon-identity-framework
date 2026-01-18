@@ -43,6 +43,9 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.LongWaitNode;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.ShowPromptNode;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.StepConfigGraphNode;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.EvaluationResult;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngine;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngineFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
@@ -50,6 +53,7 @@ import org.wso2.carbon.identity.application.authentication.framework.internal.Fr
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -82,6 +86,84 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
 
     private static final Log log = LogFactory.getLog(JsGraalGraphBuilder.class);
     protected Context context;
+
+    /**
+     * Set the authentication context in the thread-local for JavaScript execution.
+     * This method is exposed for remote JS engine callbacks to set up context.
+     *
+     * @param context The authentication context to set.
+     */
+    public static void setContextForJsThreadLocal(AuthenticationContext context) {
+        contextForJs.set(context);
+    }
+
+    /**
+     * Get the authentication context from the thread-local.
+     *
+     * @return The authentication context, or null if not set.
+     */
+    public static AuthenticationContext getContextForJsThreadLocal() {
+        return contextForJs.get();
+    }
+
+    /**
+     * Remove the authentication context from the thread-local.
+     */
+    public static void removeContextForJsThreadLocal() {
+        contextForJs.remove();
+    }
+
+    /**
+     * Set the dynamically built base node in the thread-local.
+     * This method is exposed for remote JS engine callbacks.
+     *
+     * @param node The AuthGraphNode to set as the base node.
+     */
+    public static void setDynamicallyBuiltBaseNodeThreadLocal(AuthGraphNode node) {
+        dynamicallyBuiltBaseNode.set(node);
+    }
+
+    /**
+     * Get the dynamically built base node from the thread-local.
+     *
+     * @return The AuthGraphNode, or null if not set.
+     */
+    public static AuthGraphNode getDynamicallyBuiltBaseNodeThreadLocal() {
+        return dynamicallyBuiltBaseNode.get();
+    }
+
+    /**
+     * Remove the dynamically built base node from the thread-local.
+     */
+    public static void removeDynamicallyBuiltBaseNodeThreadLocal() {
+        dynamicallyBuiltBaseNode.remove();
+    }
+
+    /**
+     * Set the current builder in the thread-local.
+     * This method is exposed for remote JS engine callbacks.
+     *
+     * @param builder The JsGraphBuilder to set.
+     */
+    public static void setCurrentBuilderThreadLocal(JsGraphBuilder builder) {
+        currentBuilder.set(builder);
+    }
+
+    /**
+     * Get the current builder from the thread-local.
+     *
+     * @return The JsGraphBuilder, or null if not set.
+     */
+    public static JsGraphBuilder getCurrentBuilderThreadLocal() {
+        return currentBuilder.get();
+    }
+
+    /**
+     * Remove the current builder from the thread-local.
+     */
+    public static void removeCurrentBuilderThreadLocal() {
+        currentBuilder.remove();
+    }
 
     private static final String REMOVE_FUNCTIONS = "var quit=function(){Log.error('quit function is restricted.')};" +
             "var exit=function(){Log.error('exit function is restricted.')};" +
@@ -188,7 +270,12 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             optionalScriptExecutionData.ifPresent(
                     scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
                             scriptExecutionData));
+            log.info("[createWith] About to persist context bindings for SP: " +
+                    authenticationContext.getServiceProviderName() +
+                    ", contextId: " + authenticationContext.getContextIdentifier() +
+                    ", authContext hashCode: " + System.identityHashCode(authenticationContext));
             JsGraalGraphBuilderFactory.persistCurrentContext(authenticationContext, context);
+            log.info("[createWith] Bindings persisted successfully");
         } catch (PolyglotException e) {
             result.setBuildSuccessful(false);
             result.setErrorReason(
@@ -251,17 +338,72 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             return;
         }
         eventsMap.forEach((key, value) -> {
-            if ((!(value instanceof GraalSerializableJsFunction))) {
+            if (value instanceof GraalSerializableJsFunction) {
+                decisionNode.addGenericFunction(key, (GraalSerializableJsFunction) value);
+            } else if (value instanceof String) {
+                // Handle function source code sent directly as String from sidecar.
+                String source = (String) value;
+                if (source.trim().startsWith("function") || source.contains("=>")) {
+                    GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
+                    decisionNode.addGenericFunction(key, jsFunction);
+                    if (log.isDebugEnabled()) {
+                        log.debug("Created GraalSerializableJsFunction from String source for event: " + key);
+                    }
+                } else {
+                    log.error("Event handler : " + key + " is a String but doesn't look like a function: " + source);
+                }
+            } else if (value instanceof Map) {
+                // Handle function references from remote sidecar - they may come as Maps with source code.
+                Map<?, ?> funcMap = (Map<?, ?>) value;
+                Object sourceObj = funcMap.get("source");
+                if (sourceObj != null) {
+                    String source = sourceObj.toString();
+                    GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
+                    decisionNode.addGenericFunction(key, jsFunction);
+                    if (log.isDebugEnabled()) {
+                        log.debug("Created GraalSerializableJsFunction from Map source for event: " + key);
+                    }
+                } else {
+                    // Try to find any string value that looks like function source.
+                    String funcSource = findFunctionSourceInMap(funcMap);
+                    if (funcSource != null) {
+                        GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(funcSource);
+                        decisionNode.addGenericFunction(key, jsFunction);
+                        log.info("Created GraalSerializableJsFunction from Map value for event: " + key);
+                    } else {
+                        log.error("Event handler : " + key + " is a Map but has no usable function source. Keys: " +
+                                funcMap.keySet() + ", values: " + funcMap.values());
+                    }
+                }
+            } else {
+                // Try original path for local GraalVM Value objects.
                 GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
                 if (jsFunction != null) {
                     decisionNode.addGenericFunction(key, jsFunction);
                 } else {
-                    log.error("Event handler : " + key + " is not a function : " + value);
+                    log.error("Event handler : " + key + " is not a function, type: " +
+                            (value != null ? value.getClass().getName() : "null") + ", value: " + value);
                 }
-            } else {
-                decisionNode.addGenericFunction(key, (GraalSerializableJsFunction) value);
             }
         });
+    }
+
+    /**
+     * Finds function source code within a Map by looking for string values that look like functions.
+     *
+     * @param map The map to search.
+     * @return The function source if found, null otherwise.
+     */
+    private static String findFunctionSourceInMap(Map<?, ?> map) {
+        for (Object val : map.values()) {
+            if (val instanceof String) {
+                String str = (String) val;
+                if (str.trim().startsWith("function") || str.contains("=>")) {
+                    return str;
+                }
+            }
+        }
+        return null;
     }
 
     private static void addHandlers(ShowPromptNode showPromptNode, Map<String, Object> handlersMap) {
@@ -270,15 +412,52 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             return;
         }
         handlersMap.forEach((key, value) -> {
-            if (!(value instanceof GraalSerializableJsFunction)) {
+            if (value instanceof GraalSerializableJsFunction) {
+                showPromptNode.addGenericHandler(key, (GraalSerializableJsFunction) value);
+            } else if (value instanceof String) {
+                // Handle function source code sent directly as String from sidecar.
+                String source = (String) value;
+                if (source.trim().startsWith("function") || source.contains("=>")) {
+                    GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
+                    showPromptNode.addGenericHandler(key, jsFunction);
+                    if (log.isDebugEnabled()) {
+                        log.debug("Created GraalSerializableJsFunction from String source for handler: " + key);
+                    }
+                } else {
+                    log.error("Handler : " + key + " is a String but doesn't look like a function: " + source);
+                }
+            } else if (value instanceof Map) {
+                // Handle function references from remote sidecar - they may come as Maps with source code.
+                Map<?, ?> funcMap = (Map<?, ?>) value;
+                Object sourceObj = funcMap.get("source");
+                if (sourceObj != null) {
+                    String source = sourceObj.toString();
+                    GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
+                    showPromptNode.addGenericHandler(key, jsFunction);
+                    if (log.isDebugEnabled()) {
+                        log.debug("Created GraalSerializableJsFunction from Map source for handler: " + key);
+                    }
+                } else {
+                    // Try to find any string value that looks like function source.
+                    String funcSource = findFunctionSourceInMap(funcMap);
+                    if (funcSource != null) {
+                        GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(funcSource);
+                        showPromptNode.addGenericHandler(key, jsFunction);
+                        log.info("Created GraalSerializableJsFunction from Map value for handler: " + key);
+                    } else {
+                        log.error("Handler : " + key + " is a Map but has no usable function source. Keys: " +
+                                funcMap.keySet() + ", values: " + funcMap.values());
+                    }
+                }
+            } else {
+                // Try original path for local GraalVM Value objects.
                 GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
                 if (jsFunction != null) {
                     showPromptNode.addGenericHandler(key, jsFunction);
                 } else {
-                    log.error("Event handler : " + key + " is not a function : " + value);
+                    log.error("Handler : " + key + " is not a function, type: " +
+                            (value != null ? value.getClass().getName() : "null") + ", value: " + value);
                 }
-            } else {
-                showPromptNode.addGenericHandler(key, (GraalSerializableJsFunction) value);
             }
         });
     }
@@ -591,6 +770,147 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             if (!jsFunction.isFunction()) {
                 return jsFunction.getSource();
             }
+
+            // Check if we should use remote execution via sidecar.
+            JsEngineFactory jsEngineFactory = JsEngineFactory.getInstance();
+            if (jsEngineFactory.getDefaultMode() == JsEngineFactory.ExecutionMode.REMOTE) {
+                result = evaluateRemote(authenticationContext, params);
+            } else {
+                result = evaluateLocal(authenticationContext, params);
+            }
+            return result;
+        }
+
+        /**
+         * Execute JavaScript in a remote sidecar process.
+         * This provides isolation from the main JVM.
+         *
+         * @param authenticationContext The authentication context.
+         * @param params The parameters to pass to the function.
+         * @return The result of the execution.
+         */
+        @SuppressWarnings("unchecked")
+        private Object evaluateRemote(AuthenticationContext authenticationContext, Object... params) {
+
+            JsGraalGraphBuilder graphBuilder = JsGraalGraphBuilder.this;
+            Object result = null;
+
+            try (JsEngine jsEngine = JsEngineFactory.getInstance().createEngine(authenticationContext)) {
+                currentBuilder.set(graphBuilder);
+                JsGraalGraphBuilder.contextForJs.set(authenticationContext);
+
+                // Log context info for debugging.
+                log.info("[evaluateRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
+                        ", contextId: " + authenticationContext.getContextIdentifier() +
+                        ", step: " + authenticationContext.getCurrentStep() +
+                        ", authContext hashCode: " + System.identityHashCode(authenticationContext));
+
+                // Get persisted bindings from authentication context (variables like rolesToStepUp).
+                Map<String, Object> persistedBindings =
+                        (Map<String, Object>) authenticationContext.getProperty("JS_BINDING_CURRENT_CONTEXT");
+                if (persistedBindings != null) {
+                    log.info("[evaluateRemote] Found " + persistedBindings.size() +
+                            " persisted bindings: " + persistedBindings.keySet());
+                    // Log each binding value for debugging.
+                    for (Map.Entry<String, Object> entry : persistedBindings.entrySet()) {
+                        log.info("[evaluateRemote] Binding: " + entry.getKey() + " = " +
+                                (entry.getValue() != null ?
+                                        entry.getValue().getClass().getSimpleName() + ": " + entry.getValue() :
+                                        "null"));
+                    }
+                } else {
+                    log.info("[evaluateRemote] No persisted bindings found in authContext. " +
+                            "Property keys: " + authenticationContext.getProperties().keySet());
+                    persistedBindings = new HashMap<>();
+                }
+
+                // Register host functions that the sidecar can call back.
+                Map<String, Object> hostFunctions = new HashMap<>();
+                hostFunctions.put(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuterInAsyncEvent());
+                hostFunctions.put(JS_FUNC_SEND_ERROR, new SendErrorAsyncFunctionImpl());
+                hostFunctions.put(JS_AUTH_FAILURE, new FailAuthenticationFunctionImpl());
+                hostFunctions.put(JS_FUNC_SHOW_PROMPT, new JsGraalPromptExecutorImpl());
+                hostFunctions.put(JS_FUNC_LOAD_FUNC_LIB, new JsGraalLoadExecutorImpl());
+                hostFunctions.put(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
+
+                JsFunctionRegistry jsFunctionRegistrar =
+                        FrameworkServiceDataHolder.getInstance().getJsFunctionRegistry();
+                if (jsFunctionRegistrar != null) {
+                    Map<String, Object> functionMap =
+                            jsFunctionRegistrar.getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
+                    hostFunctions.putAll(functionMap);
+                }
+                jsEngine.registerHostFunctions(hostFunctions);
+
+                String identifier = UUID.randomUUID().toString();
+                Optional<JSExecutionMonitorData> optionalScriptExecutionData =
+                        Optional.ofNullable(retrieveAuthScriptExecutionMonitorData(authenticationContext));
+                try {
+                    startScriptExecutionMonitor(identifier, authenticationContext,
+                            optionalScriptExecutionData.orElse(null));
+
+                    // Execute the callback function in the sidecar with persisted bindings
+                    EvaluationResult evalResult = jsEngine.executeCallback(
+                            jsFunction.getSource(),
+                            params,
+                            persistedBindings,  // Pass persisted bindings for variables like rolesToStepUp
+                            authenticationContext);
+
+                    if (evalResult.isSuccess()) {
+                        result = evalResult.getResult();
+                        if (log.isDebugEnabled()) {
+                            log.debug("Remote JS execution succeeded for SP: " +
+                                    authenticationContext.getServiceProviderName() +
+                                    ", elapsed: " + evalResult.getElapsedMs() + "ms");
+                        }
+                    } else {
+                        log.error("Remote JS execution failed for SP: " +
+                                authenticationContext.getServiceProviderName() +
+                                ", error: " + evalResult.getErrorMessage());
+                        AuthGraphNode executingNode =
+                                (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
+                        FailNode failNode = new FailNode();
+                        attachToLeaf(executingNode, failNode);
+                    }
+                } finally {
+                    optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
+                }
+                optionalScriptExecutionData.ifPresent(
+                        scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
+                                scriptExecutionData));
+
+                AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
+                if (canInfuse(executingNode)) {
+                    infuse(executingNode, dynamicallyBuiltBaseNode.get());
+                }
+
+            } catch (Throwable e) {
+                // We need to catch all errors here, then log and handle.
+                log.error("Error in remote JavaScript execution for service provider : " +
+                        authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
+                        jsFunction.getSource(), e);
+                AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
+                FailNode failNode = new FailNode();
+                attachToLeaf(executingNode, failNode);
+            } finally {
+                contextForJs.remove();
+                dynamicallyBuiltBaseNode.remove();
+            }
+            return result;
+        }
+
+        /**
+         * Execute JavaScript locally in the same JVM.
+         * This is the original execution path.
+         *
+         * @param authenticationContext The authentication context.
+         * @param params The parameters to pass to the function.
+         * @return The result of the execution.
+         */
+        private Object evaluateLocal(AuthenticationContext authenticationContext, Object... params) {
+
+            JsGraalGraphBuilder graphBuilder = JsGraalGraphBuilder.this;
+            Object result = null;
             try {
                 currentBuilder.set(graphBuilder);
                 JsGraalGraphBuilderFactory.restoreCurrentContext(authenticationContext, context);
@@ -644,7 +964,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 }
 
             } catch (Throwable e) {
-                //We need to catch all the javascript errors here, then log and handle.
+                // We need to catch all the javascript errors here, then log and handle.
                 log.error("Error in executing the javascript for service provider : " +
                         authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
                         jsFunction.getSource(), e);

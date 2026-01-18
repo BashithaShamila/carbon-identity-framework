@@ -22,7 +22,7 @@
     <parent>
         <groupId>org.wso2.carbon.identity.framework</groupId>
         <artifactId>authentication-framework</artifactId>
-        <version>7.8.644-SNAPSHOT</version>
+        <version>7.8.644</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -238,10 +238,61 @@
             <groupId>net.minidev</groupId>
             <artifactId>json-smart</artifactId>
         </dependency>
+        <!-- GraalJS Dependencies Wrapper Bundle - provides junixsocket and protobuf as OSGi exports -->
+        <dependency>
+            <groupId>org.wso2.carbon.identity.framework</groupId>
+            <artifactId>org.wso2.carbon.identity.graaljs.deps.wrapper</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- junixsocket for UDS communication with GraalJS sidecar (compile only, exported by wrapper) -->
+        <dependency>
+            <groupId>com.kohlschutter.junixsocket</groupId>
+            <artifactId>junixsocket-core</artifactId>
+            <version>2.9.1</version>
+            <type>pom</type>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.kohlschutter.junixsocket</groupId>
+            <artifactId>junixsocket-common</artifactId>
+            <version>2.9.1</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- Protocol Buffers for sidecar communication (compile only, exported by wrapper) -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>3.21.12</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 
     <build>
+        <extensions>
+            <extension>
+                <groupId>kr.motd.maven</groupId>
+                <artifactId>os-maven-plugin</artifactId>
+                <version>1.7.1</version>
+            </extension>
+        </extensions>
         <plugins>
+            <!-- Protobuf code generation -->
+            <plugin>
+                <groupId>org.xolstice.maven.plugins</groupId>
+                <artifactId>protobuf-maven-plugin</artifactId>
+                <version>0.6.1</version>
+                <configuration>
+                    <protocArtifact>com.google.protobuf:protoc:3.21.12:exe:${os.detected.classifier}</protocArtifact>
+                    <protoSourceRoot>${project.basedir}/src/main/proto</protoSourceRoot>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -261,6 +312,7 @@
                         <Bundle-SymbolicName>${project.artifactId}</Bundle-SymbolicName>
                         <Bundle-Name>${project.artifactId}</Bundle-Name>
                         <Private-Package>org.wso2.carbon.identity.application.authentication.framework.internal,
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto,
                         </Private-Package>
                         <Import-Package>
                             javax.xml.namespace,
@@ -312,9 +364,14 @@
                             org.wso2.carbon.identity.configuration.mgt.core.exception; version="${carbon.identity.package.import.version.range}",
                             org.wso2.carbon.identity.configuration.mgt.core.model; version="${carbon.identity.package.import.version.range}",
                             org.wso2.carbon.identity.role.v2.mgt.core; version="${carbon.identity.package.import.version.range}",
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.*; version="${carbon.identity.package.import.version.range}",
+                            org.newsclub.net.unix.*; version="[2.9.0,3.0.0)"; resolution:=optional,
+                            com.google.protobuf.*; version="[3.21.0,4.0.0)"; resolution:=optional,
                         </Import-Package>
                         <Export-Package>!org.wso2.carbon.identity.application.authentication.framework.internal,
                             org.wso2.carbon.identity.application.authentication.framework.*;
+                            version="${carbon.identity.package.export.version}",
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.*;
                             version="${carbon.identity.package.export.version}"
                         </Export-Package>
                         <DynamicImport-Package>*</DynamicImport-Package>
