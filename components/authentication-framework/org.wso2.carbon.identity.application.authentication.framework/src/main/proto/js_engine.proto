@@ -16,6 +16,7 @@ message EvaluateRequest {
     map<string, SerializedValue> bindings = 5;
     repeated HostFunctionDefinition host_functions = 6;
     string callback_socket_path = 7;
+    ContextData context_data = 8;
 }
 
 message EvaluateResponse {

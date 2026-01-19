@@ -120,6 +120,29 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                                 .build());
             }
 
+            // Add context data for context proxy reconstruction in sidecar
+            if (authContext != null) {
+                log.info("[RemoteJsEngine] Adding context data, step: " + authContext.getCurrentStep() +
+                        ", subject: "
+                        + (authContext.getSubject() != null ? authContext.getSubject().getUserName() : "null"));
+                ContextData.Builder contextDataBuilder = ContextData.newBuilder()
+                        .setSessionContextKey(
+                                authContext.getContextIdentifier() != null ? authContext.getContextIdentifier() : "")
+                        .setCurrentStep(authContext.getCurrentStep());
+
+                AuthenticatedUser subject = authContext.getSubject();
+                if (subject != null) {
+                    contextDataBuilder.setUsername(subject.getUserName() != null ? subject.getUserName() : "");
+                    contextDataBuilder.setUserStoreDomain(
+                            subject.getUserStoreDomain() != null ? subject.getUserStoreDomain() : "");
+                    contextDataBuilder
+                            .setTenantDomain(subject.getTenantDomain() != null ? subject.getTenantDomain() : "");
+                }
+                requestBuilder.setContextData(contextDataBuilder.build());
+            } else {
+                log.warn("[RemoteJsEngine] No authContext available, context proxy will be empty");
+            }
+
             // Send request and get response (blocking)
             log.info("[RemoteJsEngine] Sending evaluate request to sidecar...");
             EvaluateResponse response = client.sendEvaluate(requestBuilder.build());
@@ -178,9 +201,9 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                         callbackBindings.keySet());
                 for (Map.Entry<String, Object> entry : callbackBindings.entrySet()) {
                     log.info("[RemoteJsEngine] Callback binding: " + entry.getKey() + " = " +
-                            (entry.getValue() != null ?
-                                    entry.getValue().getClass().getSimpleName() + ": " + entry.getValue() :
-                                    "null"));
+                            (entry.getValue() != null
+                                    ? entry.getValue().getClass().getSimpleName() + ": " + entry.getValue()
+                                    : "null"));
                     bindings.put(entry.getKey(), entry.getValue());
                 }
             } else {
@@ -238,9 +261,9 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
                 if (!hostFunctions.containsKey(entry.getKey())) {
                     log.info("[RemoteJsEngine] Serializing binding: " + entry.getKey() + " = " +
-                            (entry.getValue() != null ?
-                                    entry.getValue().getClass().getSimpleName() + ": " + entry.getValue() :
-                                    "null"));
+                            (entry.getValue() != null
+                                    ? entry.getValue().getClass().getSimpleName() + ": " + entry.getValue()
+                                    : "null"));
                     requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(entry.getValue()));
                     bindingsAdded++;
                 }
@@ -382,13 +405,13 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
 
                     // Adapt arguments to match method parameter types.
                     Object[] adaptedArgs = adaptArgumentsForMethod(method, args);
-                    
+
                     // Log adapted arguments.
                     for (int i = 0; i < adaptedArgs.length; i++) {
                         log.info("[RemoteJsEngine] Adapted arg[" + i + "]: type=" +
                                 (adaptedArgs[i] != null ? adaptedArgs[i].getClass().getName() : "null"));
                     }
-                    
+
                     log.info("[RemoteJsEngine] Invoking method with " + adaptedArgs.length + " adapted args");
                     try {
                         Object result = method.invoke(hostFunc, adaptedArgs);
@@ -399,7 +422,8 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                         // Log the actual cause of the error.
                         Throwable cause = e.getCause();
                         log.error("[RemoteJsEngine] Host function '" + functionName + "' threw exception: " +
-                                (cause != null ? cause.getClass().getName() + ": " + cause.getMessage() : e.getMessage()));
+                                (cause != null ? cause.getClass().getName() + ": " + cause.getMessage()
+                                        : e.getMessage()));
                         if (cause != null) {
                             log.error("[RemoteJsEngine] Root cause stack trace:", cause);
                         }
@@ -435,7 +459,8 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
 
     /**
      * Set up thread-local context required for host function invocation.
-     * This ensures tenant context, carbon context, and JS graph builder contexts are properly set.
+     * This ensures tenant context, carbon context, and JS graph builder contexts
+     * are properly set.
      */
     private void setupThreadContext() {
         if (authContext != null) {
@@ -443,12 +468,13 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                     ", contextId: " + authContext.getContextIdentifier());
             try {
                 // Set Carbon context for the current thread.
-                org.wso2.carbon.context.PrivilegedCarbonContext carbonContext =
-                        org.wso2.carbon.context.PrivilegedCarbonContext.getThreadLocalCarbonContext();
+                org.wso2.carbon.context.PrivilegedCarbonContext carbonContext = org.wso2.carbon.context.PrivilegedCarbonContext
+                        .getThreadLocalCarbonContext();
                 carbonContext.setTenantDomain(authContext.getTenantDomain());
                 carbonContext.setTenantId(
-                        org.wso2.carbon.identity.core.util.IdentityTenantUtil.getTenantId(authContext.getTenantDomain()));
-                
+                        org.wso2.carbon.identity.core.util.IdentityTenantUtil
+                                .getTenantId(authContext.getTenantDomain()));
+
                 // Set username if available.
                 if (authContext.getSubject() != null) {
                     carbonContext.setUsername(authContext.getSubject().getUserName());
@@ -456,13 +482,13 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                 log.info("[RemoteJsEngine] Thread context set - tenantDomain: " + carbonContext.getTenantDomain() +
                         ", tenantId: " + carbonContext.getTenantId() +
                         ", username: " + carbonContext.getUsername());
-                
+
                 // Set JsGraalGraphBuilder thread-local contexts for host function callbacks.
                 // This is critical for executeStep and other functions that need the context.
                 JsGraalGraphBuilder.setContextForJsThreadLocal(authContext);
                 log.info("[RemoteJsEngine] Set contextForJs ThreadLocal with authContext: " +
                         authContext.getContextIdentifier());
-                
+
                 // Get and set the current executing node from the authentication context.
                 // This is used by executeStepInAsyncEvent to build the authentication graph.
                 Object currentNode = authContext.getProperty("Adaptive.Auth.Current.Graph.Node");
@@ -474,7 +500,7 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                     log.warn("[RemoteJsEngine] PROP_CURRENT_NODE not found or wrong type in authContext. " +
                             "Type: " + (currentNode != null ? currentNode.getClass().getName() : "null"));
                 }
-                
+
             } catch (Exception e) {
                 log.warn("[RemoteJsEngine] Failed to set up thread context: " + e.getMessage(), e);
             }
@@ -601,8 +627,8 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
         if (paramType.getSimpleName().contains("JsAuthenticationContext") ||
                 paramType.getSimpleName().contains("JsGraalAuthenticationContext")) {
             log.info("[RemoteJsEngine] Reconstructed JsGraalAuthenticationContext from stored authContext");
-            return new org.wso2.carbon.identity.application.authentication.framework
-                    .config.model.graph.js.graaljs.JsGraalAuthenticationContext(authContext);
+            return new org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext(
+                    authContext);
         }
 
         // Handle Integer conversion.
