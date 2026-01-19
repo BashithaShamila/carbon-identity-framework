@@ -27,7 +27,9 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.EvaluateResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ExecuteCallbackRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ExecuteCallbackResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionDefinition;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedValue;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
 
@@ -114,8 +116,7 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
             for (String funcName : hostFunctions.keySet()) {
                 log.info("[RemoteJsEngine] Registering host function: " + funcName);
                 requestBuilder.addHostFunctions(
-                        org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionDefinition
-                                .newBuilder()
+                        HostFunctionDefinition.newBuilder()
                                 .setName(funcName)
                                 .build());
             }
@@ -275,8 +276,7 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
             for (String funcName : hostFunctions.keySet()) {
                 log.info("[RemoteJsEngine] Adding host function: " + funcName);
                 requestBuilder.addHostFunctions(
-                        org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionDefinition
-                                .newBuilder()
+                        HostFunctionDefinition.newBuilder()
                                 .setName(funcName)
                                 .build());
             }
@@ -458,6 +458,66 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
     }
 
     /**
+     * Get a context property value for the dynamic context proxy.
+     * This navigates the property path on the real JsGraalAuthenticationContext.
+     */
+    @Override
+    public Object getContextProperty(String propertyPath) throws Exception {
+        log.debug("[RemoteJsEngine] getContextProperty called: " + propertyPath + ", session: " + sessionId);
+
+        if (authContext == null) {
+            log.warn("[RemoteJsEngine] No authContext available for property access");
+            return null;
+        }
+
+        // Create the JsGraalAuthenticationContext wrapper
+        JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
+
+        // Navigate the property path: "request.params.foo" -> ["request", "params",
+        // "foo"]
+        String[] parts = propertyPath.split("\\.");
+        Object current = jsContext;
+
+        for (String part : parts) {
+            if (current == null) {
+                return null;
+            }
+
+            // Handle special case for array-like access (e.g., "steps.1")
+            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                // Numeric index access - try to get as array element
+                org.graalvm.polyglot.proxy.ProxyObject proxy = (org.graalvm.polyglot.proxy.ProxyObject) current;
+                current = proxy.getMember(part); // Try numeric key as string
+            } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                // Standard member access
+                org.graalvm.polyglot.proxy.ProxyObject proxy = (org.graalvm.polyglot.proxy.ProxyObject) current;
+                current = proxy.getMember(part);
+                log.debug("[RemoteJsEngine] Accessed member '" + part + "' on proxy -> " +
+                        (current != null ? current.getClass().getSimpleName() : "null"));
+            } else if (current instanceof java.util.Map) {
+                // Map access
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+                current = map.get(part);
+            } else {
+                // Try reflection as last resort
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = current.getClass().getMethod(getterName);
+                    current = getter.invoke(current);
+                } catch (NoSuchMethodException e) {
+                    log.debug("[RemoteJsEngine] No getter for property: " + part);
+                    return null;
+                }
+            }
+        }
+
+        log.debug("[RemoteJsEngine] getContextProperty '" + propertyPath + "' = " +
+                (current != null ? current.getClass().getSimpleName() : "null"));
+        return current;
+    }
+
+    /**
      * Set up thread-local context required for host function invocation.
      * This ensures tenant context, carbon context, and JS graph builder contexts
      * are properly set.
@@ -627,8 +687,7 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
         if (paramType.getSimpleName().contains("JsAuthenticationContext") ||
                 paramType.getSimpleName().contains("JsGraalAuthenticationContext")) {
             log.info("[RemoteJsEngine] Reconstructed JsGraalAuthenticationContext from stored authContext");
-            return new org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext(
-                    authContext);
+            return new JsGraalAuthenticationContext(authContext);
         }
 
         // Handle Integer conversion.

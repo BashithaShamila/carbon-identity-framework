@@ -67,6 +67,35 @@ message HostFunctionDefinition {
     string description = 2;
 }
 
+// ============ Context Property Access ============
+// For dynamic context proxy - calls back to IS for property access
+
+message ContextPropertyRequest {
+    string session_id = 1;
+    string property_path = 2;  // e.g., "request", "request.params", "steps.1"
+    string proxy_type = 3;     // Type of proxy: "context", "request", "steps", etc.
+}
+
+message ContextPropertyResponse {
+    bool success = 1;
+    SerializedValue value = 2;
+    string error_message = 3;
+    bool is_proxy = 4;         // If true, value represents a proxy needing further access
+    string proxy_type = 5;     // Type for creating nested proxy
+    repeated string member_keys = 6;  // Available member keys for this object
+}
+
+message ContextPropertySetRequest {
+    string session_id = 1;
+    string property_path = 2;
+    SerializedValue value = 3;
+}
+
+message ContextPropertySetResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
 // ============ Serialized Value Types ============
 
 message SerializedValue {

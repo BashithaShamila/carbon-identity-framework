@@ -23,19 +23,17 @@ import org.apache.commons.logging.LogFactory;
 import org.newsclub.net.unix.AFUNIXServerSocket;
 import org.newsclub.net.unix.AFUNIXSocket;
 import org.newsclub.net.unix.AFUNIXSocketAddress;
-import org.wso2.carbon.identity.application.authentication.framework.JsFunctionRegistry;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyRequest;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedValue;
-import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
-import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
 
 import java.io.Closeable;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +56,8 @@ public class HostCallbackServer implements Closeable {
     // Message type constants matching UdsClient
     private static final int HOST_FUNCTION_REQUEST = 5;
     private static final int HOST_FUNCTION_RESPONSE = 6;
+    private static final int CONTEXT_PROPERTY_REQUEST = 7;
+    private static final int CONTEXT_PROPERTY_RESPONSE = 8;
 
     private final String socketPath;
     private AFUNIXServerSocket serverSocket;
@@ -176,31 +176,40 @@ public class HostCallbackServer implements Closeable {
                 try {
                     // Read message type
                     int messageType = input.readByte();
-                    log.info("[HostCallbackServer] Received message type: " + messageType);
-                    if (messageType != HOST_FUNCTION_REQUEST) {
-                        log.warn("[HostCallbackServer] Unexpected message type: " + messageType);
-                        continue;
-                    }
+                    log.debug("[HostCallbackServer] Received message type: " + messageType);
 
                     // Read length and body
                     int length = input.readInt();
-                    log.info("[HostCallbackServer] Reading " + length + " bytes for host function request");
+                    log.debug("[HostCallbackServer] Reading " + length + " bytes");
                     byte[] messageBytes = new byte[length];
                     input.readFully(messageBytes);
 
-                    // Process the request
-                    HostFunctionRequest request = HostFunctionRequest.parseFrom(messageBytes);
-                    log.info("[HostCallbackServer] Processing request for function: " + request.getFunctionName());
-                    HostFunctionResponse response = processHostFunctionRequest(request);
+                    // Dispatch based on message type
+                    if (messageType == HOST_FUNCTION_REQUEST) {
+                        HostFunctionRequest request = HostFunctionRequest.parseFrom(messageBytes);
+                        log.info("[HostCallbackServer] Processing host function: " + request.getFunctionName());
+                        HostFunctionResponse response = processHostFunctionRequest(request);
 
-                    // Write response
-                    byte[] responseBytes = response.toByteArray();
-                    log.info("[HostCallbackServer] Sending response: " + responseBytes.length +
-                            " bytes, success: " + response.getSuccess());
-                    output.writeByte(HOST_FUNCTION_RESPONSE);
-                    output.writeInt(responseBytes.length);
-                    output.write(responseBytes);
-                    output.flush();
+                        byte[] responseBytes = response.toByteArray();
+                        output.writeByte(HOST_FUNCTION_RESPONSE);
+                        output.writeInt(responseBytes.length);
+                        output.write(responseBytes);
+                        output.flush();
+
+                    } else if (messageType == CONTEXT_PROPERTY_REQUEST) {
+                        ContextPropertyRequest request = ContextPropertyRequest.parseFrom(messageBytes);
+                        log.debug("[HostCallbackServer] Processing context property: " + request.getPropertyPath());
+                        ContextPropertyResponse response = processContextPropertyRequest(request);
+
+                        byte[] responseBytes = response.toByteArray();
+                        output.writeByte(CONTEXT_PROPERTY_RESPONSE);
+                        output.writeInt(responseBytes.length);
+                        output.write(responseBytes);
+                        output.flush();
+
+                    } else {
+                        log.warn("[HostCallbackServer] Unknown message type: " + messageType);
+                    }
 
                 } catch (java.io.EOFException e) {
                     log.info("[HostCallbackServer] Client connection closed (EOF)");
@@ -262,6 +271,102 @@ public class HostCallbackServer implements Closeable {
         }
     }
 
+    /**
+     * Process a context property request from the sidecar.
+     * This enables the dynamic context proxy to access any property from the real
+     * JsGraalAuthenticationContext.
+     */
+    private ContextPropertyResponse processContextPropertyRequest(ContextPropertyRequest request) {
+        String sessionId = request.getSessionId();
+        String propertyPath = request.getPropertyPath();
+        log.debug("[HostCallbackServer] Processing context property request: " + propertyPath + ", session: "
+                + sessionId);
+
+        HostFunctionHandler handler = sessionHandlers.get(sessionId);
+        if (handler == null) {
+            log.error("[HostCallbackServer] No handler for session: " + sessionId);
+            return ContextPropertyResponse.newBuilder()
+                    .setSuccess(false)
+                    .setErrorMessage("No handler for session: " + sessionId)
+                    .build();
+        }
+
+        try {
+            // Delegate to handler to get the property value
+            Object value = handler.getContextProperty(propertyPath);
+
+            if (value == null) {
+                return ContextPropertyResponse.newBuilder()
+                        .setSuccess(true)
+                        .build();
+            }
+
+            // Determine if this is a proxy type that needs nested access
+            boolean isProxy = isProxyType(value);
+            String proxyType = isProxy ? getProxyType(value) : "";
+
+            ContextPropertyResponse.Builder responseBuilder = ContextPropertyResponse.newBuilder()
+                    .setSuccess(true)
+                    .setIsProxy(isProxy)
+                    .setProxyType(proxyType);
+
+            // If it's a proxy type, we don't serialize the value - just indicate it's a
+            // proxy
+            // The sidecar will create a nested DynamicContextProxy for it
+            if (!isProxy) {
+                responseBuilder.setValue(ProtobufSerializer.toProto(value));
+            }
+
+            // Add member keys if this is a proxy type
+            if (isProxy && value instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) value).getMemberKeys();
+                if (keys instanceof String[]) {
+                    for (String key : (String[]) keys) {
+                        responseBuilder.addMemberKeys(key);
+                    }
+                }
+            }
+
+            return responseBuilder.build();
+
+        } catch (Exception e) {
+            log.error("[HostCallbackServer] Error getting context property: " + propertyPath, e);
+            return ContextPropertyResponse.newBuilder()
+                    .setSuccess(false)
+                    .setErrorMessage(e.getMessage())
+                    .build();
+        }
+    }
+
+    /**
+     * Check if the value is a proxy type that needs nested access.
+     */
+    private boolean isProxyType(Object value) {
+        if (value == null) {
+            return false;
+        }
+        String className = value.getClass().getName();
+        return className.contains("JsGraal") ||
+                className.contains("JsServlet") ||
+                className.contains("JsStep") ||
+                className.contains("JsAuthenticated") ||
+                className.contains("JsWritable") ||
+                value instanceof org.graalvm.polyglot.proxy.ProxyObject;
+    }
+
+    /**
+     * Get the proxy type name for a value.
+     */
+    private String getProxyType(Object value) {
+        String className = value.getClass().getSimpleName();
+        if (className.startsWith("JsGraal")) {
+            return className.substring(7).toLowerCase(); // JsGraalServletRequest -> servletrequest
+        } else if (className.startsWith("Js")) {
+            return className.substring(2).toLowerCase(); // JsStep -> step
+        }
+        return className.toLowerCase();
+    }
+
     @Override
     public void close() throws IOException {
         running.set(false);
@@ -297,5 +402,18 @@ public class HostCallbackServer implements Closeable {
          * @throws Exception If invocation fails.
          */
         Object invokeHostFunction(String functionName, Object... args) throws Exception;
+
+        /**
+         * Get a context property value for the dynamic context proxy.
+         *
+         * @param propertyPath Property path (e.g., "request", "request.params",
+         *                     "currentKnownSubject.username").
+         * @return The property value, or null if not found.
+         * @throws Exception If access fails.
+         */
+        default Object getContextProperty(String propertyPath) throws Exception {
+            // Default implementation returns null - override for dynamic property access
+            return null;
+        }
     }
 }
