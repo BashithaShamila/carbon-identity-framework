@@ -518,6 +518,117 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
     }
 
     /**
+     * Set a context property value (write-back from sidecar).
+     * This navigates the property path and sets the value on the target object.
+     * Supports paths like: "currentKnownSubject.localClaims.email"
+     */
+    @Override
+    public boolean setContextProperty(String propertyPath, Object value) throws Exception {
+        log.info("[RemoteJsEngine] setContextProperty called: " + propertyPath + " = " +
+                (value != null ? value.getClass().getSimpleName() : "null") + ", session: " + sessionId);
+
+        if (authContext == null) {
+            log.warn("[RemoteJsEngine] No authContext available for property write");
+            return false;
+        }
+
+        // Navigate to the parent object and then set the final property
+        String[] parts = propertyPath.split("\\.");
+        if (parts.length == 0) {
+            return false;
+        }
+
+        // Create the JsGraalAuthenticationContext wrapper
+        JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
+
+        // Navigate to the parent (all parts except the last one)
+        Object parent = jsContext;
+        for (int i = 0; i < parts.length - 1; i++) {
+            String part = parts[i];
+            if (parent == null) {
+                log.warn("[RemoteJsEngine] Null encountered at path segment: " + part);
+                return false;
+            }
+
+            if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                org.graalvm.polyglot.proxy.ProxyObject proxy = (org.graalvm.polyglot.proxy.ProxyObject) parent;
+                parent = proxy.getMember(part);
+            } else if (parent instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) parent;
+                parent = map.get(part);
+            } else {
+                // Try reflection getter
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = parent.getClass().getMethod(getterName);
+                    parent = getter.invoke(parent);
+                } catch (NoSuchMethodException e) {
+                    log.warn("[RemoteJsEngine] Cannot navigate path segment: " + part);
+                    return false;
+                }
+            }
+        }
+
+        // Now set the final property
+        String finalPart = parts[parts.length - 1];
+
+        if (parent == null) {
+            log.warn("[RemoteJsEngine] Parent is null, cannot set: " + finalPart);
+            return false;
+        }
+
+        // Try different ways to set the property
+        if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+            // ProxyObject.putMember requires a org.graalvm.polyglot.Value, not Object
+            // Our writable proxies (JsWritableParameters, JsClaims) implement putMember
+            // using the underlying data structure, so use reflection to call it
+            try {
+                // Try to find and call a putMember method that accepts our value type
+                java.lang.reflect.Method[] methods = parent.getClass().getMethods();
+                for (java.lang.reflect.Method method : methods) {
+                    if ("putMember".equals(method.getName()) && method.getParameterCount() == 2) {
+                        Class<?>[] paramTypes = method.getParameterTypes();
+                        if (paramTypes[0] == String.class && paramTypes[1].isAssignableFrom(value.getClass())) {
+                            method.invoke(parent, finalPart, value);
+                            log.info("[RemoteJsEngine] Successfully set property via putMember: " + propertyPath);
+                            return true;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("[RemoteJsEngine] putMember invocation failed: " + e.getMessage());
+            }
+        }
+
+        if (parent instanceof java.util.Map) {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> map = (java.util.Map<String, Object>) parent;
+            map.put(finalPart, value);
+            log.info("[RemoteJsEngine] Successfully set property in map: " + propertyPath);
+            return true;
+        }
+
+        // Try reflection setter
+        try {
+            String setterName = "set" + Character.toUpperCase(finalPart.charAt(0)) + finalPart.substring(1);
+            java.lang.reflect.Method[] methods = parent.getClass().getMethods();
+            for (java.lang.reflect.Method method : methods) {
+                if (method.getName().equals(setterName) && method.getParameterCount() == 1) {
+                    method.invoke(parent, value);
+                    log.info("[RemoteJsEngine] Successfully set property via setter: " + propertyPath);
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[RemoteJsEngine] Setter failed for: " + finalPart, e);
+        }
+
+        log.warn("[RemoteJsEngine] Could not set property: " + propertyPath);
+        return false;
+    }
+
+    /**
      * Set up thread-local context required for host function invocation.
      * This ensures tenant context, carbon context, and JS graph builder contexts
      * are properly set.

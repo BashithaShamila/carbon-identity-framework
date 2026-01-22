@@ -25,6 +25,8 @@ import org.newsclub.net.unix.AFUNIXSocket;
 import org.newsclub.net.unix.AFUNIXSocketAddress;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertySetRequest;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertySetResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedValue;
@@ -58,6 +60,8 @@ public class HostCallbackServer implements Closeable {
     private static final int HOST_FUNCTION_RESPONSE = 6;
     private static final int CONTEXT_PROPERTY_REQUEST = 7;
     private static final int CONTEXT_PROPERTY_RESPONSE = 8;
+    private static final int CONTEXT_PROPERTY_SET_REQUEST = 9;
+    private static final int CONTEXT_PROPERTY_SET_RESPONSE = 10;
 
     private final String socketPath;
     private AFUNIXServerSocket serverSocket;
@@ -207,6 +211,17 @@ public class HostCallbackServer implements Closeable {
                         output.write(responseBytes);
                         output.flush();
 
+                    } else if (messageType == CONTEXT_PROPERTY_SET_REQUEST) {
+                        ContextPropertySetRequest request = ContextPropertySetRequest.parseFrom(messageBytes);
+                        log.info("[HostCallbackServer] Processing context property SET: " + request.getPropertyPath());
+                        ContextPropertySetResponse response = processContextPropertySetRequest(request);
+
+                        byte[] responseBytes = response.toByteArray();
+                        output.writeByte(CONTEXT_PROPERTY_SET_RESPONSE);
+                        output.writeInt(responseBytes.length);
+                        output.write(responseBytes);
+                        output.flush();
+
                     } else {
                         log.warn("[HostCallbackServer] Unknown message type: " + messageType);
                     }
@@ -339,6 +354,55 @@ public class HostCallbackServer implements Closeable {
     }
 
     /**
+     * Process a context property SET request from the sidecar (write-back).
+     * This enables scripts to modify context properties like user.localClaims.
+     */
+    private ContextPropertySetResponse processContextPropertySetRequest(ContextPropertySetRequest request) {
+        String sessionId = request.getSessionId();
+        String propertyPath = request.getPropertyPath();
+        SerializedValue value = request.getValue();
+
+        log.info("[HostCallbackServer] Processing context property SET: " + propertyPath + ", session: " + sessionId);
+
+        HostFunctionHandler handler = sessionHandlers.get(sessionId);
+        if (handler == null) {
+            log.error("[HostCallbackServer] No handler for session: " + sessionId);
+            return ContextPropertySetResponse.newBuilder()
+                    .setSuccess(false)
+                    .setErrorMessage("No handler for session: " + sessionId)
+                    .build();
+        }
+
+        try {
+            // Deserialize the value
+            Object javaValue = ProtobufSerializer.fromProto(value);
+
+            // Delegate to handler to set the property value
+            boolean success = handler.setContextProperty(propertyPath, javaValue);
+
+            if (success) {
+                log.info("[HostCallbackServer] Successfully set property: " + propertyPath);
+                return ContextPropertySetResponse.newBuilder()
+                        .setSuccess(true)
+                        .build();
+            } else {
+                log.warn("[HostCallbackServer] Handler returned false for set: " + propertyPath);
+                return ContextPropertySetResponse.newBuilder()
+                        .setSuccess(false)
+                        .setErrorMessage("Property not writable: " + propertyPath)
+                        .build();
+            }
+
+        } catch (Exception e) {
+            log.error("[HostCallbackServer] Error setting context property: " + propertyPath, e);
+            return ContextPropertySetResponse.newBuilder()
+                    .setSuccess(false)
+                    .setErrorMessage(e.getMessage())
+                    .build();
+        }
+    }
+
+    /**
      * Check if the value is a proxy type that needs nested access.
      */
     private boolean isProxyType(Object value) {
@@ -414,6 +478,20 @@ public class HostCallbackServer implements Closeable {
         default Object getContextProperty(String propertyPath) throws Exception {
             // Default implementation returns null - override for dynamic property access
             return null;
+        }
+
+        /**
+         * Set a context property value (write-back from sidecar).
+         *
+         * @param propertyPath Property path (e.g.,
+         *                     "currentKnownSubject.localClaims.email").
+         * @param value        The value to set.
+         * @return true if the property was successfully set.
+         * @throws Exception If write fails.
+         */
+        default boolean setContextProperty(String propertyPath, Object value) throws Exception {
+            // Default implementation returns false - override for write-back support
+            return false;
         }
     }
 }
