@@ -70,7 +70,7 @@ public class HostCallbackServer implements Closeable {
     private Thread acceptThread;
 
     // Map of session ID to host function handlers
-    private final Map<String, HostFunctionHandler> sessionHandlers = new ConcurrentHashMap<>();
+    private final Map<String, CallbackServer.HostFunctionHandler> sessionHandlers = new ConcurrentHashMap<>();
 
     // Singleton instance per IS process
     private static HostCallbackServer instance;
@@ -114,7 +114,7 @@ public class HostCallbackServer implements Closeable {
      * @param sessionId Session ID.
      * @param handler   Handler for host function calls.
      */
-    public void registerHandler(String sessionId, HostFunctionHandler handler) {
+    public void registerHandler(String sessionId, CallbackServer.HostFunctionHandler handler) {
         sessionHandlers.put(sessionId, handler);
     }
 
@@ -213,7 +213,8 @@ public class HostCallbackServer implements Closeable {
 
                     } else if (messageType == CONTEXT_PROPERTY_SET_REQUEST) {
                         ContextPropertySetRequest request = ContextPropertySetRequest.parseFrom(messageBytes);
-                        log.info("[HostCallbackServer] Processing context property SET: " + request.getPropertyPath());
+                        log.info("[HostCallbackServer] Processing context property SET: " +
+                                request.getPropertyPath());
                         ContextPropertySetResponse response = processContextPropertySetRequest(request);
 
                         byte[] responseBytes = response.toByteArray();
@@ -257,7 +258,7 @@ public class HostCallbackServer implements Closeable {
             args.add(deserializedArg);
         }
 
-        HostFunctionHandler handler = sessionHandlers.get(sessionId);
+        CallbackServer.HostFunctionHandler handler = sessionHandlers.get(sessionId);
         if (handler == null) {
             log.error("[HostCallbackServer] No handler registered for session: " + sessionId +
                     ", available sessions: " + sessionHandlers.keySet());
@@ -269,7 +270,8 @@ public class HostCallbackServer implements Closeable {
         log.info("[HostCallbackServer] Found handler: " + handler.getClass().getName());
 
         try {
-            log.info("[HostCallbackServer] Invoking host function: " + functionName + " with " + args.size() + " args");
+            log.info("[HostCallbackServer] Invoking host function: " + functionName + " with " + args.size()
+                    + " args");
             Object result = handler.invokeHostFunction(functionName, args.toArray());
             log.info("[HostCallbackServer] Host function returned: " +
                     (result != null ? result.getClass().getName() : "null"));
@@ -297,7 +299,7 @@ public class HostCallbackServer implements Closeable {
         log.debug("[HostCallbackServer] Processing context property request: " + propertyPath + ", session: "
                 + sessionId);
 
-        HostFunctionHandler handler = sessionHandlers.get(sessionId);
+        CallbackServer.HostFunctionHandler handler = sessionHandlers.get(sessionId);
         if (handler == null) {
             log.error("[HostCallbackServer] No handler for session: " + sessionId);
             return ContextPropertyResponse.newBuilder()
@@ -362,9 +364,10 @@ public class HostCallbackServer implements Closeable {
         String propertyPath = request.getPropertyPath();
         SerializedValue value = request.getValue();
 
-        log.info("[HostCallbackServer] Processing context property SET: " + propertyPath + ", session: " + sessionId);
+        log.info("[HostCallbackServer] Processing context property SET: " + propertyPath + ", session: "
+                + sessionId);
 
-        HostFunctionHandler handler = sessionHandlers.get(sessionId);
+        CallbackServer.HostFunctionHandler handler = sessionHandlers.get(sessionId);
         if (handler == null) {
             log.error("[HostCallbackServer] No handler for session: " + sessionId);
             return ContextPropertySetResponse.newBuilder()
@@ -455,43 +458,15 @@ public class HostCallbackServer implements Closeable {
 
     /**
      * Interface for handling host function calls from sidecar.
+     *
+     * @deprecated Use {@link CallbackServer.HostFunctionHandler} instead.
+     *             This interface is maintained for backward compatibility and extends
+     *             the abstracted CallbackServer.HostFunctionHandler interface.
      */
-    public interface HostFunctionHandler {
-        /**
-         * Invoke a host function.
-         *
-         * @param functionName Name of the function (e.g., "executeStep", "sendError").
-         * @param args         Arguments passed from JavaScript.
-         * @return Result of the function call.
-         * @throws Exception If invocation fails.
-         */
-        Object invokeHostFunction(String functionName, Object... args) throws Exception;
-
-        /**
-         * Get a context property value for the dynamic context proxy.
-         *
-         * @param propertyPath Property path (e.g., "request", "request.params",
-         *                     "currentKnownSubject.username").
-         * @return The property value, or null if not found.
-         * @throws Exception If access fails.
-         */
-        default Object getContextProperty(String propertyPath) throws Exception {
-            // Default implementation returns null - override for dynamic property access
-            return null;
-        }
-
-        /**
-         * Set a context property value (write-back from sidecar).
-         *
-         * @param propertyPath Property path (e.g.,
-         *                     "currentKnownSubject.localClaims.email").
-         * @param value        The value to set.
-         * @return true if the property was successfully set.
-         * @throws Exception If write fails.
-         */
-        default boolean setContextProperty(String propertyPath, Object value) throws Exception {
-            // Default implementation returns false - override for write-back support
-            return false;
-        }
+    @Deprecated
+    public interface HostFunctionHandler extends CallbackServer.HostFunctionHandler {
+        // This interface is now empty and extends CallbackServer.HostFunctionHandler
+        // for backward compatibility with existing code that references
+        // HostCallbackServer.HostFunctionHandler directly.
     }
 }

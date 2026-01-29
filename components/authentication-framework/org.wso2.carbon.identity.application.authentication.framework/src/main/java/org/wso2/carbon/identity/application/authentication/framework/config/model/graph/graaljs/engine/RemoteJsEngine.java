@@ -39,20 +39,22 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Remote JavaScript engine that communicates with a GraalJS sidecar via UDS.
+ * Remote JavaScript engine that communicates with a GraalJS sidecar via pluggable transport.
  * Each instance represents a session with the sidecar.
  * <p>
- * Host function calls from the sidecar are routed back to IS via
- * HostCallbackServer.
+ * Host function calls from the sidecar are routed back to IS via the callback server.
+ * <p>
+ * This implementation is decoupled from specific transport mechanisms (UDS, gRPC, etc.)
+ * through the RemoteEngineTransport and CallbackServer abstractions.
  */
-public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunctionHandler {
+public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHandler {
 
     private static final Log log = LogFactory.getLog(RemoteJsEngine.class);
 
-    private final String socketPath;
+    private final RemoteEngineTransport transport;
+    private final CallbackServer callbackServer;
     private final String sessionId;
     private final AuthenticationContext authContext;
-    private UdsClient client;
     private Map<String, Object> bindings = new HashMap<>();
     private Map<String, Object> hostFunctions = new HashMap<>();
     private boolean closed = false;
@@ -61,14 +63,19 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
     /**
      * Create a new remote JavaScript engine.
      *
-     * @param socketPath  Path to the sidecar UDS socket.
-     * @param authContext The authentication context for this session.
+     * @param transport      The transport layer for communicating with the remote engine.
+     * @param callbackServer The callback server for receiving host function invocations.
+     * @param authContext    The authentication context for this session.
      */
-    public RemoteJsEngine(String socketPath, AuthenticationContext authContext) {
-        this.socketPath = socketPath;
+    public RemoteJsEngine(RemoteEngineTransport transport, CallbackServer callbackServer,
+                          AuthenticationContext authContext) {
+        this.transport = transport;
+        this.callbackServer = callbackServer;
         this.authContext = authContext;
         this.sessionId = UUID.randomUUID().toString();
-        log.info("[RemoteJsEngine] Created with session: " + sessionId + ", socketPath: " + socketPath +
+        log.info("[RemoteJsEngine] Created with session: " + sessionId +
+                ", transport: " + transport.getClass().getSimpleName() +
+                ", callbackServer: " + callbackServer.getClass().getSimpleName() +
                 ", SP: " + (authContext != null ? authContext.getServiceProviderName() : "null"));
     }
 
@@ -78,7 +85,7 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
         log.info("[RemoteJsEngine] evaluate() called, session: " + sessionId + ", sourceId: " + sourceIdentifier);
 
         try {
-            log.info("[RemoteJsEngine] Ensuring connection to sidecar at: " + socketPath);
+            log.info("[RemoteJsEngine] Ensuring connection to remote engine");
             ensureConnected();
             log.info("[RemoteJsEngine] Connection established, registering handler...");
             ensureHandlerRegistered();
@@ -95,11 +102,11 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                     .setScript(script)
                     .setSourceIdentifier(sourceIdentifier != null ? sourceIdentifier : "script");
 
-            // Set callback socket path for host function callbacks
-            String callbackSocketPath = HostCallbackServer.getCallbackSocketPath();
-            log.info("[RemoteJsEngine] Callback socket path: " + callbackSocketPath);
-            if (callbackSocketPath != null) {
-                requestBuilder.setCallbackSocketPath(callbackSocketPath);
+            // Set callback address for host function callbacks
+            String callbackAddress = callbackServer.getCallbackAddress();
+            log.info("[RemoteJsEngine] Callback address: " + callbackAddress);
+            if (callbackAddress != null) {
+                requestBuilder.setCallbackSocketPath(callbackAddress);
             }
 
             // Serialize bindings (excluding host functions which are handled differently)
@@ -145,8 +152,8 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
             }
 
             // Send request and get response (blocking)
-            log.info("[RemoteJsEngine] Sending evaluate request to sidecar...");
-            EvaluateResponse response = client.sendEvaluate(requestBuilder.build());
+            log.info("[RemoteJsEngine] Sending evaluate request to remote engine...");
+            EvaluateResponse response = transport.sendEvaluate(requestBuilder.build());
             log.info("[RemoteJsEngine] Received response, success: " + response.getSuccess());
 
             if (response.getSuccess()) {
@@ -190,7 +197,7 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                 ", args: " + (arguments != null ? arguments.length : 0));
 
         try {
-            log.info("[RemoteJsEngine] executeCallback - ensuring connection to: " + socketPath);
+            log.info("[RemoteJsEngine] executeCallback - ensuring connection to remote engine");
             ensureConnected();
             log.info("[RemoteJsEngine] executeCallback - connection OK, registering handler...");
             ensureHandlerRegistered();
@@ -217,11 +224,11 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                     .setSessionId(sessionId)
                     .setFunctionSource(functionSource);
 
-            // Set callback socket path
-            String callbackSocketPath = HostCallbackServer.getCallbackSocketPath();
-            log.info("[RemoteJsEngine] executeCallback - callback socket: " + callbackSocketPath);
-            if (callbackSocketPath != null) {
-                requestBuilder.setCallbackSocketPath(callbackSocketPath);
+            // Set callback address
+            String callbackAddress = callbackServer.getCallbackAddress();
+            log.info("[RemoteJsEngine] executeCallback - callback address: " + callbackAddress);
+            if (callbackAddress != null) {
+                requestBuilder.setCallbackSocketPath(callbackAddress);
             }
 
             // Add context data for proxy object reconstruction
@@ -282,8 +289,8 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
             }
 
             // Send request and get response (blocking)
-            log.info("[RemoteJsEngine] Sending executeCallback request to sidecar...");
-            ExecuteCallbackResponse response = client.sendExecuteCallback(requestBuilder.build());
+            log.info("[RemoteJsEngine] Sending executeCallback request to remote engine...");
+            ExecuteCallbackResponse response = transport.sendExecuteCallback(requestBuilder.build());
             log.info("[RemoteJsEngine] executeCallback response - success: " + response.getSuccess() +
                     ", elapsed: " + response.getElapsedMs() + "ms");
 
@@ -348,18 +355,13 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
 
             // Unregister from callback server
             if (handlerRegistered) {
-                HostCallbackServer server = HostCallbackServer.getInstance();
-                if (server != null) {
-                    server.unregisterHandler(sessionId);
-                }
+                callbackServer.unregisterHandler(sessionId);
             }
 
-            if (client != null) {
-                try {
-                    client.close();
-                } catch (IOException e) {
-                    log.debug("Error closing UDS client", e);
-                }
+            try {
+                transport.close();
+            } catch (IOException e) {
+                log.debug("Error closing transport", e);
             }
             log.debug("RemoteJsEngine closed for session: " + sessionId);
         }
@@ -639,7 +641,8 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
                     ", contextId: " + authContext.getContextIdentifier());
             try {
                 // Set Carbon context for the current thread.
-                org.wso2.carbon.context.PrivilegedCarbonContext carbonContext = org.wso2.carbon.context.PrivilegedCarbonContext
+                org.wso2.carbon.context.PrivilegedCarbonContext carbonContext =
+                        org.wso2.carbon.context.PrivilegedCarbonContext
                         .getThreadLocalCarbonContext();
                 carbonContext.setTenantDomain(authContext.getTenantDomain());
                 carbonContext.setTenantId(
@@ -876,26 +879,21 @@ public class RemoteJsEngine implements JsEngine, HostCallbackServer.HostFunction
     }
 
     private void ensureConnected() throws IOException {
-        log.info("[RemoteJsEngine] ensureConnected - client: " +
-                (client != null ? "exists" : "null") +
-                ", connected: " + (client != null && client.isConnected()));
-        if (client == null || !client.isConnected()) {
-            log.info("[RemoteJsEngine] Creating new UdsClient to: " + socketPath);
-            client = new UdsClient(socketPath);
-            client.connect();
-            log.info("[RemoteJsEngine] Connected to sidecar successfully");
+        log.info("[RemoteJsEngine] ensureConnected - transport: " + transport.getClass().getSimpleName() +
+                ", connected: " + transport.isConnected());
+        if (!transport.isConnected()) {
+            log.info("[RemoteJsEngine] Connecting transport");
+            transport.connect();
+            log.info("[RemoteJsEngine] Connected to remote engine successfully");
         }
     }
 
     private void ensureHandlerRegistered() {
         if (!handlerRegistered) {
-            HostCallbackServer server = HostCallbackServer.getInstance();
-            log.info("[RemoteJsEngine] Registering handler with HostCallbackServer, server: " +
-                    (server != null ? "exists" : "null"));
-            if (server != null) {
-                server.registerHandler(sessionId, this);
-                handlerRegistered = true;
-            }
+            log.info("[RemoteJsEngine] Registering handler with callback server: " +
+                    callbackServer.getClass().getSimpleName());
+            callbackServer.registerHandler(sessionId, this);
+            handlerRegistered = true;
         }
     }
 }

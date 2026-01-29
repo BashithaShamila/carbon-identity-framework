@@ -279,7 +279,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
             }
             optionalScriptExecutionData.ifPresent(
-                    scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
+                    scriptExecutionData ->
+                            storeAuthScriptExecutionMonitorData(authenticationContext,
                             scriptExecutionData));
             log.info("[createWith] About to persist context bindings for SP: " +
                     authenticationContext.getServiceProviderName() +
@@ -402,7 +403,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             }
 
             optionalScriptExecutionData.ifPresent(
-                    scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
+                    scriptExecutionData ->
+                            storeAuthScriptExecutionMonitorData(authenticationContext,
                             scriptExecutionData));
 
             log.info("[createWithRemote] Script execution completed for SP: " +
@@ -482,7 +484,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                         log.debug("Created GraalSerializableJsFunction from String source for event: " + key);
                     }
                 } else {
-                    log.error("Event handler : " + key + " is a String but doesn't look like a function: " + source);
+                    log.error("Event handler : " + key + " is a String but doesn't look like a function: "
+                            + source);
                 }
             } else if (value instanceof Map) {
                 // Handle function references from remote sidecar - they may come as Maps with
@@ -1018,7 +1021,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
                 }
                 optionalScriptExecutionData.ifPresent(
-                        scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
+                        scriptExecutionData ->
+                                storeAuthScriptExecutionMonitorData(authenticationContext,
                                 scriptExecutionData));
 
                 AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
@@ -1096,7 +1100,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
                 }
                 optionalScriptExecutionData.ifPresent(
-                        scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
+                        scriptExecutionData ->
+                                storeAuthScriptExecutionMonitorData(authenticationContext,
                                 scriptExecutionData));
 
                 JsGraalGraphBuilderFactory.persistCurrentContext(authenticationContext, context);

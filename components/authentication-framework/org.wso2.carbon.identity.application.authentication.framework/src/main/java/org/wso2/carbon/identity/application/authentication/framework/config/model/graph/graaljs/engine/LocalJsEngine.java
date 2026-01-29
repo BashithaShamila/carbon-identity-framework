@@ -108,10 +108,12 @@ public class LocalJsEngine implements JsEngine {
 
             // Evaluate the function source to get a callable function
             Value function = context.eval(
-                    Source.newBuilder(POLYGLOT_LANGUAGE, "(" + functionSource + ")", POLYGLOT_SOURCE).build());
+                    Source.newBuilder(POLYGLOT_LANGUAGE, "(" + functionSource + ")",
+                            POLYGLOT_SOURCE).build());
 
             if (!function.canExecute()) {
-                return EvaluationResult.failure("Function source is not executable", "InvalidFunction",
+                return EvaluationResult
+                        .failure("Function source is not executable", "InvalidFunction",
                         System.currentTimeMillis() - startTime);
             }
 

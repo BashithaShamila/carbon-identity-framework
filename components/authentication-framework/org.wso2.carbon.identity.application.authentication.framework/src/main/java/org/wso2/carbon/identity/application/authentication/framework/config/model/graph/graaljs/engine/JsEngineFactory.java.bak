@@ -85,11 +85,11 @@ public class JsEngineFactory {
         GRPC
     }
 
-    // Current execution mode - defaults to LOCAL (using Graal.js directly in IS)
-    private static ExecutionMode currentMode = ExecutionMode.LOCAL;
+    // Current execution mode - defaults to REMOTE for all users
+    private static ExecutionMode currentMode = ExecutionMode.REMOTE;
 
     // Current transport type for remote mode - defaults to UDS
-    private static TransportType currentTransportType = TransportType.UDS;
+    private static TransportType currentTransportType = TransportType.GRPC;
 
     // Default socket path for sidecar communication
     private static String sidecarSocketPath = "/tmp/graaljs-sidecar.sock";
