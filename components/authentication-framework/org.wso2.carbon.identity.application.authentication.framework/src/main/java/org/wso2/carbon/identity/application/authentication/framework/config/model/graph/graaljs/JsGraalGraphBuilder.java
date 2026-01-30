@@ -471,7 +471,36 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         if (eventsMap == null) {
             return;
         }
+        log.info("[addEventListeners] Received eventsMap with " + eventsMap.size() + " entries");
         eventsMap.forEach((key, value) -> {
+            log.info("[addEventListeners] Processing event: " + key + ", value type: " +
+                    (value != null ? value.getClass().getName() : "null") +
+                    ", isValue: " + (value instanceof Value) +
+                    ", isMap: " + (value instanceof Map));
+
+            // Check if it's a PolyglotMapAndFunction - detect by class name since it's not instanceof Value
+            if (value != null && value.getClass().getName().contains("PolyglotMapAndFunction")) {
+                log.info("[addEventListeners] Detected PolyglotMapAndFunction for event: " + key);
+                try {
+                    // Try to convert to Value using current Context
+                    Context currentContext = Context.getCurrent();
+                    if (currentContext != null) {
+                        Value valueAsValue = currentContext.asValue(value);
+                        if (valueAsValue.canExecute()) {
+                            log.info("[addEventListeners] Successfully converted to executable Value");
+                            GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(valueAsValue);
+                            if (jsFunction != null) {
+                                decisionNode.addGenericFunction(key, jsFunction);
+                                log.info("[addEventListeners] Successfully serialized PolyglotMapAndFunction for event: " + key);
+                                return; // Skip further processing
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.error("[addEventListeners] Failed to convert PolyglotMapAndFunction to Value", e);
+                }
+            }
+
             if (value instanceof GraalSerializableJsFunction) {
                 decisionNode.addGenericFunction(key, (GraalSerializableJsFunction) value);
             } else if (value instanceof String) {

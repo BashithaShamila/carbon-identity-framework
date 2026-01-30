@@ -103,10 +103,27 @@ public class GraalSerializableJsFunction implements GenericSerializableJsFunctio
             }
             if (functionAsValue.canExecute()) {
                 if (functionAsValue.isHostObject()) {
+                    log.debug("[toSerializableForm] Skipping host object function");
                     return null;
                 }
-                String source = (String) functionAsValue.getSourceLocation().getCharacters();
-                return serializePolyglot(source);
+                log.debug("[toSerializableForm] Attempting to extract source from function");
+                try {
+                    String source = (String) functionAsValue.getSourceLocation().getCharacters();
+                    log.info("[toSerializableForm] Successfully extracted function source, length: " + source.length());
+                    return serializePolyglot(source);
+                } catch (UnsupportedOperationException e) {
+                    log.error("[toSerializableForm] getSourceLocation() not supported for this function type", e);
+                    // Try toString() as fallback
+                    String functionString = functionAsValue.toString();
+                    if (functionString != null && functionString.startsWith("function")) {
+                        log.info("[toSerializableForm] Using toString() fallback: " + functionString.substring(0, Math.min(50, functionString.length())));
+                        return serializePolyglot(functionString);
+                    }
+                } catch (Exception e) {
+                    log.error("[toSerializableForm] Unexpected error extracting function source", e);
+                }
+            } else {
+                log.debug("[toSerializableForm] Value is not executable");
             }
         } catch (PolyglotException e) {
             log.error("Error when serializing JavaScript Function: ", e);
