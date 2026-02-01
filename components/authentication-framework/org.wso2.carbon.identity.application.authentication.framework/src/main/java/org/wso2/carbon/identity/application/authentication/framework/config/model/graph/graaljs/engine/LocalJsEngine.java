@@ -24,6 +24,7 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.GraalSerializer;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 
 import java.io.IOException;
@@ -185,13 +186,23 @@ public class LocalJsEngine implements JsEngine {
         return context;
     }
 
+    /**
+     * Extract bindings from the JavaScript context and serialize them to persistable Java objects.
+     * This matches the behavior of JsGraalGraphBuilderFactory.persistCurrentContext which uses
+     * GraalSerializer to convert GraalVM Value objects to serializable forms.
+     *
+     * @param jsBindings The JavaScript bindings from the Polyglot context
+     * @return Map of serialized bindings that can be persisted in AuthenticationContext
+     */
     private Map<String, Object> extractBindings(Value jsBindings) {
         Map<String, Object> result = new HashMap<>();
         for (String key : jsBindings.getMemberKeys()) {
             Value binding = jsBindings.getMember(key);
-            // Skip host functions and Log object
+            // Skip host functions and Log object (same logic as original persistCurrentContext)
             if (!((binding.isHostObject() && binding.canExecute()) || key.equals("Log"))) {
-                result.put(key, binding);
+                // CRITICAL: Serialize the binding using GraalSerializer to make it persistable
+                // This matches the original behavior: GraalSerializer.getInstance().toJsSerializable(binding)
+                result.put(key, GraalSerializer.getInstance().toJsSerializable(binding));
             }
         }
         return result;
