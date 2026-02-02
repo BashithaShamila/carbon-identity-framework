@@ -86,7 +86,7 @@ public class JsEngineFactory {
     }
 
     // Current execution mode - defaults to LOCAL (using Graal.js directly in IS)
-    private static ExecutionMode currentMode = ExecutionMode.LOCAL;
+    private static ExecutionMode currentMode = ExecutionMode.REMOTE;
 
     // Current transport type for remote mode - defaults to UDS
     private static TransportType currentTransportType = TransportType.UDS;

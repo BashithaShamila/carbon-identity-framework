@@ -37,6 +37,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Remote JavaScript engine that communicates with a GraalJS sidecar via pluggable transport.
@@ -55,8 +56,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     private final CallbackServer callbackServer;
     private final String sessionId;
     private final AuthenticationContext authContext;
-    private Map<String, Object> bindings = new HashMap<>();
-    private Map<String, Object> hostFunctions = new HashMap<>();
+    // CRITICAL FIX: Use ConcurrentHashMap to prevent race conditions during concurrent access
+    // from multiple threads (e.g., main execution thread + callback handler threads)
+    private final Map<String, Object> bindings = new ConcurrentHashMap<>();
+    private final Map<String, Object> hostFunctions = new ConcurrentHashMap<>();
     private boolean closed = false;
     private boolean handlerRegistered = false;
 
@@ -109,11 +112,13 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 requestBuilder.setCallbackSocketPath(callbackAddress);
             }
 
-            // Serialize bindings (excluding host functions which are handled differently)
+            // Serialize bindings for initial script evaluation
+            // Host functions are registered separately via HostFunctionDefinition
+            // ProtobufSerializer.toProto() converts Java objects to protobuf SerializedValue
             log.info("[RemoteJsEngine] Serializing " + bindings.size() + " bindings, " +
                     hostFunctions.size() + " host functions");
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
-                // Skip host function objects - they can't be serialized directly
+                // Skip host function objects - they're registered via addHostFunctions() instead
                 if (!hostFunctions.containsKey(entry.getKey())) {
                     requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(entry.getValue()));
                 }
@@ -204,15 +209,21 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             log.info("[RemoteJsEngine] executeCallback - handler registered: " + handlerRegistered);
 
             // Apply callback bindings
+            // CRITICAL: callbackBindings come from AuthenticationContext and are already serialized
+            // by GraalSerializer (through JsGraalGraphBuilderFactory.persistCurrentContext or LocalJsEngine).
+            // They contain: HashMap, ArrayList, primitives, GraalSerializableJsFunction objects.
+            // We store them as-is here, and later ProtobufSerializer.toProto() will handle them correctly
+            // (it calls GraalSerializer.toJsSerializableInternal which is idempotent for already-serialized objects).
             if (callbackBindings != null && !callbackBindings.isEmpty()) {
                 log.info("[RemoteJsEngine] Applying " + callbackBindings.size() + " callback bindings: " +
                         callbackBindings.keySet());
                 for (Map.Entry<String, Object> entry : callbackBindings.entrySet()) {
+                    Object value = entry.getValue();
                     log.info("[RemoteJsEngine] Callback binding: " + entry.getKey() + " = " +
-                            (entry.getValue() != null
-                                    ? entry.getValue().getClass().getSimpleName() + ": " + entry.getValue()
-                                    : "null"));
-                    bindings.put(entry.getKey(), entry.getValue());
+                            (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
+
+                    // Store binding - ConcurrentHashMap ensures thread-safe access
+                    bindings.put(entry.getKey(), value);
                 }
             } else {
                 log.info("[RemoteJsEngine] No callback bindings provided (null or empty). " +
@@ -262,17 +273,23 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             }
 
             // Serialize bindings (excluding host functions)
+            // SERIALIZATION FLOW:
+            // 1. bindings map contains objects already serialized by GraalSerializer (HashMap, ArrayList, etc.)
+            // 2. ProtobufSerializer.toProto() will:
+            //    a. Call GraalSerializer.toJsSerializableInternal() first (idempotent for already-serialized)
+            //    b. Convert to protobuf SerializedValue for transport to sidecar
+            // 3. Special handling: GraalSerializableJsFunction objects are serialized to SerializedFunction
             log.info("[RemoteJsEngine] Total bindings to serialize: " + bindings.size() +
                     ", keys: " + bindings.keySet());
             log.info("[RemoteJsEngine] Host functions (excluded from bindings): " + hostFunctions.keySet());
             int bindingsAdded = 0;
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
                 if (!hostFunctions.containsKey(entry.getKey())) {
+                    Object value = entry.getValue();
                     log.info("[RemoteJsEngine] Serializing binding: " + entry.getKey() + " = " +
-                            (entry.getValue() != null
-                                    ? entry.getValue().getClass().getSimpleName() + ": " + entry.getValue()
-                                    : "null"));
-                    requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(entry.getValue()));
+                            (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
+                    // ProtobufSerializer handles: primitives, String, Map, List, GraalSerializableJsFunction
+                    requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(value));
                     bindingsAdded++;
                 }
             }
