@@ -158,59 +158,94 @@ public class JsEngineFactory {
 
     /**
      * Create a remote (sidecar) JavaScript engine.
-     * Uses the current transport type (UDS or gRPC) to create the appropriate transport and callback server.
+     * Uses the transport factory to create appropriate transport and callback server implementations.
      *
      * @param authenticationContext The authentication context.
      * @return RemoteJsEngine instance.
      */
     public RemoteJsEngine createRemoteEngine(AuthenticationContext authenticationContext) {
-        RemoteEngineTransport transport;
-        CallbackServer callbackServer;
+        // Create transport configuration based on current settings
+        TransportConfig config = createTransportConfig();
 
-        if (currentTransportType == TransportType.GRPC) {
-            transport = createGrpcTransport();
-            callbackServer = createGrpcCallbackServer();
-        } else {
-            // Default to UDS
-            transport = createUdsTransport();
-            callbackServer = createUdsCallbackServer();
-        }
+        // Use factory to create transport and callback server
+        TransportFactory factory = TransportFactory.getInstance();
+        RemoteEngineTransport transport = factory.createTransport(config);
+        CallbackServer callbackServer = factory.createCallbackServer(config);
 
+        log.debug("[JsEngineFactory] Created remote engine with transport: " + config.getType());
         return new RemoteJsEngine(transport, callbackServer, authenticationContext);
     }
 
     /**
+     * Create transport configuration based on current execution mode and transport type.
+     *
+     * @return TransportConfig instance.
+     */
+    private TransportConfig createTransportConfig() {
+        // For now, always use UDS (default working implementation)
+        // Future: Switch based on currentTransportType configuration
+        return TransportConfig.forUds(sidecarSocketPath);
+
+        // Future implementation when other transports are ready:
+        /*
+        switch (currentTransportType) {
+            case GRPC:
+                return TransportConfig.forGrpc(grpcTarget, grpcCallbackPort);
+            case HTTP:
+                return TransportConfig.forHttp(httpEndpoint, httpCallbackPort);
+            case WEBSOCKET:
+                return TransportConfig.forWebSocket(wsUrl, wsCallbackPort);
+            case UDS:
+            default:
+                return TransportConfig.forUds(sidecarSocketPath);
+        }
+        */
+    }
+
+    /**
      * Create a UDS transport for remote engine communication.
+     * NOTE: This method is deprecated. Use TransportFactory instead.
      *
      * @return UdsTransportImpl instance.
+     * @deprecated Use TransportFactory.createTransport() instead.
      */
+    @Deprecated
     private RemoteEngineTransport createUdsTransport() {
         return new UdsTransportImpl(sidecarSocketPath);
     }
 
     /**
      * Create a UDS callback server for receiving host function callbacks.
+     * NOTE: This method is deprecated. Use TransportFactory instead.
      *
      * @return UdsCallbackServerImpl instance wrapping the singleton HostCallbackServer.
+     * @deprecated Use TransportFactory.createCallbackServer() instead.
      */
+    @Deprecated
     private CallbackServer createUdsCallbackServer() {
         return new UdsCallbackServerImpl();
     }
 
     /**
      * Create a gRPC transport for remote engine communication.
+     * NOTE: This method is deprecated. Use TransportFactory instead.
      *
      * @return GrpcTransportImpl instance.
+     * @deprecated Use TransportFactory.createTransport() instead.
      */
+    @Deprecated
     private RemoteEngineTransport createGrpcTransport() {
         return new GrpcTransportImpl(grpcTarget);
     }
 
     /**
      * Create a gRPC callback server for receiving host function callbacks.
+     * NOTE: This method is deprecated. Use TransportFactory instead.
      *
      * @return GrpcCallbackServerImpl instance.
+     * @deprecated Use TransportFactory.createCallbackServer() instead.
      */
+    @Deprecated
     private CallbackServer createGrpcCallbackServer() {
         return new GrpcCallbackServerImpl(grpcCallbackPort);
     }
