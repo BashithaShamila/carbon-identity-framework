@@ -488,10 +488,13 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                         Value valueAsValue = currentContext.asValue(value);
                         if (valueAsValue.canExecute()) {
                             log.info("[addEventListeners] Successfully converted to executable Value");
-                            GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(valueAsValue);
+                            GraalSerializableJsFunction jsFunction = 
+                                GraalSerializableJsFunction.toSerializableForm(valueAsValue);
                             if (jsFunction != null) {
                                 decisionNode.addGenericFunction(key, jsFunction);
-                                log.info("[addEventListeners] Successfully serialized PolyglotMapAndFunction for event: " + key);
+                                String eventMessage = "[addEventListeners] Successfully serialized " +
+                                    "PolyglotMapAndFunction for event: " + key;
+                                log.info(eventMessage);
                                 return; // Skip further processing
                             }
                         }

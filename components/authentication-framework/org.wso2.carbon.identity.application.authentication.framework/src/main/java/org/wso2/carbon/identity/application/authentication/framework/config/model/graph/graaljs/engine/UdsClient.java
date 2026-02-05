@@ -99,13 +99,20 @@ public class UdsClient implements Closeable {
     public EvaluateResponse sendEvaluate(EvaluateRequest request) throws IOException {
         ensureConnected();
 
+        log.info("[UdsClient] EvaluateRequest: " + request);
+
+
         // Write request (length-prefixed)
         byte[] requestBytes = request.toByteArray();
         writeMessage(MessageType.EVALUATE_REQUEST, requestBytes);
 
         // Read response (length-prefixed)
         byte[] responseBytes = readMessage();
-        return EvaluateResponse.parseFrom(responseBytes);
+        EvaluateResponse response = EvaluateResponse.parseFrom(responseBytes);
+
+        log.info("[UdsClient] EvaluateResponse: " + response);
+
+        return response;
     }
 
     /**
@@ -118,13 +125,20 @@ public class UdsClient implements Closeable {
     public ExecuteCallbackResponse sendExecuteCallback(ExecuteCallbackRequest request) throws IOException {
         ensureConnected();
 
+
+        log.info("[UdsClient] ExecuteCallbackRequest: " + request);
+
         // Write request (length-prefixed)
         byte[] requestBytes = request.toByteArray();
         writeMessage(MessageType.EXECUTE_CALLBACK_REQUEST, requestBytes);
 
         // Read response (length-prefixed)
         byte[] responseBytes = readMessage();
-        return ExecuteCallbackResponse.parseFrom(responseBytes);
+        ExecuteCallbackResponse response = ExecuteCallbackResponse.parseFrom(responseBytes);
+
+        log.info("[UdsClient] ExecuteCallbackResponse: " + response);
+
+        return response;
     }
 
     /**
@@ -203,7 +217,11 @@ public class UdsClient implements Closeable {
         EXECUTE_CALLBACK_REQUEST(3),
         EXECUTE_CALLBACK_RESPONSE(4),
         HOST_FUNCTION_REQUEST(5),
-        HOST_FUNCTION_RESPONSE(6);
+        HOST_FUNCTION_RESPONSE(6),
+        CONTEXT_PROPERTY_REQUEST(7),
+        CONTEXT_PROPERTY_RESPONSE(8),
+        CONTEXT_PROPERTY_SET_REQUEST(9),
+        CONTEXT_PROPERTY_SET_RESPONSE(10);
 
         private final int value;
 

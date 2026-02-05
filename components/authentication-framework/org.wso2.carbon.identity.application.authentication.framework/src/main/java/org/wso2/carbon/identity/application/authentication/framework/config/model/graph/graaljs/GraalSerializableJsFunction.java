@@ -116,7 +116,8 @@ public class GraalSerializableJsFunction implements GenericSerializableJsFunctio
                     // Try toString() as fallback
                     String functionString = functionAsValue.toString();
                     if (functionString != null && functionString.startsWith("function")) {
-                        log.info("[toSerializableForm] Using toString() fallback: " + functionString.substring(0, Math.min(50, functionString.length())));
+                        String truncatedFunction = functionString.substring(0, Math.min(50, functionString.length()));
+                        log.info("[toSerializableForm] Using toString() fallback: " + truncatedFunction);
                         return serializePolyglot(functionString);
                     }
                 } catch (Exception e) {

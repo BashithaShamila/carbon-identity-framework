@@ -191,8 +191,14 @@ public class HostCallbackServer implements Closeable {
                     // Dispatch based on message type
                     if (messageType == HOST_FUNCTION_REQUEST) {
                         HostFunctionRequest request = HostFunctionRequest.parseFrom(messageBytes);
+
+                        log.debug("[HostCallbackServer] HostFunctionRequest: " + request);
+
                         log.info("[HostCallbackServer] Processing host function: " + request.getFunctionName());
                         HostFunctionResponse response = processHostFunctionRequest(request);
+
+                        log.debug("[HostCallbackServer] HostFunctionResponse: " + response);
+
 
                         byte[] responseBytes = response.toByteArray();
                         output.writeByte(HOST_FUNCTION_RESPONSE);
@@ -202,8 +208,14 @@ public class HostCallbackServer implements Closeable {
 
                     } else if (messageType == CONTEXT_PROPERTY_REQUEST) {
                         ContextPropertyRequest request = ContextPropertyRequest.parseFrom(messageBytes);
+
+                        log.debug("[HostCallbackServer] ContextPropertyRequest: " + request);
+
                         log.debug("[HostCallbackServer] Processing context property: " + request.getPropertyPath());
                         ContextPropertyResponse response = processContextPropertyRequest(request);
+
+                        log.debug("[HostCallbackServer] ContextPropertyResponse: " + response);
+
 
                         byte[] responseBytes = response.toByteArray();
                         output.writeByte(CONTEXT_PROPERTY_RESPONSE);
@@ -213,9 +225,15 @@ public class HostCallbackServer implements Closeable {
 
                     } else if (messageType == CONTEXT_PROPERTY_SET_REQUEST) {
                         ContextPropertySetRequest request = ContextPropertySetRequest.parseFrom(messageBytes);
+
+                        log.debug("[HostCallbackServer] ContextPropertySetRequest: " + request);
+
                         log.info("[HostCallbackServer] Processing context property SET: " +
                                 request.getPropertyPath());
                         ContextPropertySetResponse response = processContextPropertySetRequest(request);
+
+                        log.debug("[HostCallbackServer] ContextPropertySetResponse: " + response);
+
 
                         byte[] responseBytes = response.toByteArray();
                         output.writeByte(CONTEXT_PROPERTY_SET_RESPONSE);
@@ -296,8 +314,8 @@ public class HostCallbackServer implements Closeable {
     private ContextPropertyResponse processContextPropertyRequest(ContextPropertyRequest request) {
         String sessionId = request.getSessionId();
         String propertyPath = request.getPropertyPath();
-        log.debug("[HostCallbackServer] Processing context property request: " + propertyPath + ", session: "
-                + sessionId);
+        log.info("[HostCallbackServer] Processing context property request: " + propertyPath + ", session: "
+                + sessionId + ", proxyType: " + request.getProxyType());
 
         CallbackServer.HostFunctionHandler handler = sessionHandlers.get(sessionId);
         if (handler == null) {
@@ -311,6 +329,9 @@ public class HostCallbackServer implements Closeable {
         try {
             // Delegate to handler to get the property value
             Object value = handler.getContextProperty(propertyPath);
+
+            log.info("[HostCallbackServer] Retrieved property '" + propertyPath + "' - type: " +
+                    (value != null ? value.getClass().getSimpleName() : "null"));
 
             if (value == null) {
                 return ContextPropertyResponse.newBuilder()
@@ -343,6 +364,9 @@ public class HostCallbackServer implements Closeable {
                     }
                 }
             }
+
+            log.info("[HostCallbackServer] Returning context property response - success: true, isProxy: " +
+                    isProxy + ", proxyType: " + proxyType);
 
             return responseBuilder.build();
 
