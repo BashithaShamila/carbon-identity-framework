@@ -24,8 +24,6 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.HostAccess;
 import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.Value;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.GrpcCallbackServerImpl;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.GrpcTransportImpl;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.UdsCallbackServerImpl;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.UdsTransportImpl;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticatedUser;
@@ -88,8 +86,8 @@ public class JsEngineFactory {
     // Current execution mode - defaults to LOCAL (using Graal.js directly in IS)
     private static ExecutionMode currentMode = ExecutionMode.REMOTE;
 
-    // Current transport type for remote mode - defaults to UDS
-    private static TransportType currentTransportType = TransportType.UDS;
+    // Current transport type for remote mode - defaults to gRPC
+    private static TransportType currentTransportType = TransportType.GRPC;
 
     // Default socket path for sidecar communication
     private static String sidecarSocketPath = "/tmp/graaljs-sidecar.sock";
@@ -182,9 +180,9 @@ public class JsEngineFactory {
      * @return TransportConfig instance.
      */
     private TransportConfig createTransportConfig() {
-        // For now, always use UDS (default working implementation)
-        // Future: Switch based on currentTransportType configuration
-        return TransportConfig.forUds(sidecarSocketPath);
+        // Using gRPC transport (requires com.wso2.identity.asgardeo.scope.service bundle)
+        // To switch back to UDS, change to: TransportConfig.forUds(sidecarSocketPath)
+        return TransportConfig.forGrpc(grpcTarget, grpcCallbackPort);
 
         // Future implementation when other transports are ready:
         /*
@@ -235,7 +233,10 @@ public class JsEngineFactory {
      */
     @Deprecated
     private RemoteEngineTransport createGrpcTransport() {
-        return new GrpcTransportImpl(grpcTarget);
+        // gRPC implementation moved to com.wso2.identity.asgardeo.scope.service jar
+        // Use TransportFactory instead
+        TransportConfig config = TransportConfig.forGrpc(grpcTarget, grpcCallbackPort);
+        return TransportFactory.getInstance().createTransport(config);
     }
 
     /**
@@ -247,7 +248,10 @@ public class JsEngineFactory {
      */
     @Deprecated
     private CallbackServer createGrpcCallbackServer() {
-        return new GrpcCallbackServerImpl(grpcCallbackPort);
+        // gRPC implementation moved to com.wso2.identity.asgardeo.scope.service jar
+        // Use TransportFactory instead
+        TransportConfig config = TransportConfig.forGrpc(grpcTarget, grpcCallbackPort);
+        return TransportFactory.getInstance().createCallbackServer(config);
     }
 
     /**

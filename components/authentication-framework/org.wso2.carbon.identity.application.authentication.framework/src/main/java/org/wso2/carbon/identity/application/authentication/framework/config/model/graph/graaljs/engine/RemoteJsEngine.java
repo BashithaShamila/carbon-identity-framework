@@ -905,8 +905,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
     }
 
-    private void ensureHandlerRegistered() {
+    private void ensureHandlerRegistered() throws IOException {
         if (!handlerRegistered) {
+            log.info("[RemoteJsEngine] Starting callback server if needed");
+            callbackServer.start();
             log.info("[RemoteJsEngine] Registering handler with callback server: " +
                     callbackServer.getClass().getSimpleName());
             callbackServer.registerHandler(sessionId, this);

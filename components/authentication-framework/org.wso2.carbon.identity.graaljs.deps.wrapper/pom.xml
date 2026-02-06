@@ -54,47 +54,8 @@
             <version>3.21.12</version>
         </dependency>
 
-        <!-- gRPC dependencies for gRPC transport -->
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-netty-shaded</artifactId>
-            <version>1.51.1</version>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-protobuf</artifactId>
-            <version>1.51.1</version>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-stub</artifactId>
-            <version>1.51.1</version>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-api</artifactId>
-            <version>1.51.1</version>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-context</artifactId>
-            <version>1.51.1</version>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-core</artifactId>
-            <version>1.51.1</version>
-        </dependency>
-        <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-            <version>31.1-android</version>
-        </dependency>
-        <dependency>
-            <groupId>io.perfmark</groupId>
-            <artifactId>perfmark-api</artifactId>
-            <version>0.25.0</version>
-        </dependency>
+        <!-- gRPC dependencies REMOVED - now provided by com.wso2.identity.asgardeo.scope.service jar -->
+        <!-- The new jar handles all gRPC transport implementation -->
 
         <!-- Logging -->
         <dependency>
@@ -133,14 +94,7 @@
                                     <include>com.kohlschutter.junixsocket:junixsocket-common</include>
                                     <include>com.kohlschutter.junixsocket:junixsocket-native-common</include>
                                     <include>com.google.protobuf:protobuf-java</include>
-                                    <include>io.grpc:grpc-netty-shaded</include>
-                                    <include>io.grpc:grpc-protobuf</include>
-                                    <include>io.grpc:grpc-stub</include>
-                                    <include>io.grpc:grpc-api</include>
-                                    <include>io.grpc:grpc-context</include>
-                                    <include>io.grpc:grpc-core</include>
-                                    <include>com.google.guava:guava</include>
-                                    <include>io.perfmark:perfmark-api</include>
+                                    <!-- gRPC artifacts removed - now in com.wso2.identity.asgardeo.scope.service -->
                                 </includes>
                             </artifactSet>
                             <filters>
@@ -158,7 +112,7 @@
                                         <Bundle-Name>${project.artifactId}</Bundle-Name>
                                         <Bundle-Version>${project.version}</Bundle-Version>
                                         <Bundle-ManifestVersion>2</Bundle-ManifestVersion>
-                                        <Export-Package>org.newsclub.net.unix;version="2.9.1",org.newsclub.net.unix.pool;version="2.9.1",com.google.protobuf;version="3.21.12",com.google.protobuf.compiler;version="3.21.12",io.grpc;version="1.51.1",io.grpc.stub;version="1.51.1",io.grpc.protobuf;version="1.51.1",io.grpc.netty.shaded;version="1.51.1",io.grpc.netty.shaded.io.grpc.netty;version="1.51.1",io.grpc.netty.shaded.io.netty.channel;version="1.51.1",com.google.common.base;version="31.1",com.google.common.collect;version="31.1",com.google.common.util.concurrent;version="31.1",io.perfmark;version="0.25.0"</Export-Package>
+                                        <Export-Package>org.newsclub.net.unix;version="2.9.1",org.newsclub.net.unix.pool;version="2.9.1",com.google.protobuf;version="3.21.12",com.google.protobuf.compiler;version="3.21.12"</Export-Package>
                                         <Import-Package>javax.net;resolution:=optional,javax.net.ssl;resolution:=optional,sun.misc;resolution:=optional,sun.nio.ch;resolution:=optional</Import-Package>
                                         <DynamicImport-Package>*</DynamicImport-Package>
                                         <Multi-Release>true</Multi-Release>

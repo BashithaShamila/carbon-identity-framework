@@ -339,8 +339,7 @@
                     <instructions>
                         <Bundle-SymbolicName>${project.artifactId}</Bundle-SymbolicName>
                         <Bundle-Name>${project.artifactId}</Bundle-Name>
-                        <Private-Package>org.wso2.carbon.identity.application.authentication.framework.internal,
-                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto,
+                        <Private-Package>org.wso2.carbon.identity.application.authentication.framework.internal
                         </Private-Package>
                         <Import-Package>
                             javax.xml.namespace,
@@ -399,7 +398,9 @@
                         <Export-Package>!org.wso2.carbon.identity.application.authentication.framework.internal,
                             org.wso2.carbon.identity.application.authentication.framework.*;
                             version="${carbon.identity.package.export.version}",
-                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.*;
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto;
+                            version="${carbon.identity.package.export.version}",
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.grpc;
                             version="${carbon.identity.package.export.version}"
                         </Export-Package>
                         <DynamicImport-Package>*</DynamicImport-Package>

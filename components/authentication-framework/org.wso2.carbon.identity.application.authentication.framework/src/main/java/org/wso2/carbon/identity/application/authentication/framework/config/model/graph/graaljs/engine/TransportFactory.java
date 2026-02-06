@@ -20,10 +20,12 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.GrpcCallbackServerImpl;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.GrpcTransportImpl;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.UdsCallbackServerImpl;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.UdsTransportImpl;
+
+// GRPC imports removed - implementation moved to com.wso2.identity.asgardeo.scope.service jar
+// import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.GrpcCallbackServerImpl;
+// import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.GrpcTransportImpl;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -64,7 +66,11 @@ public class TransportFactory {
     private TransportFactory() {
         // Register built-in transport providers
         registerProvider("UDS", new UdsTransportProvider());
-        registerProvider("GRPC", new GrpcTransportProvider());
+
+        // GRPC provider moved to com.wso2.identity.asgardeo.scope.service jar
+        // It will be registered via OSGi service activation
+        // registerProvider("GRPC", new GrpcTransportProvider());
+
         // Future transports can be registered here:
         // registerProvider("HTTP", new HttpTransportProvider());
         // registerProvider("WEBSOCKET", new WebSocketTransportProvider());
@@ -178,7 +184,10 @@ public class TransportFactory {
 
     /**
      * Built-in provider for gRPC transport.
+     * MOVED to com.wso2.identity.asgardeo.scope.service.graaljs.transport.GrpcTransportProvider
+     * This provider is now registered via OSGi service activation.
      */
+    /*
     private static class GrpcTransportProvider implements TransportProvider {
 
         @Override
@@ -196,6 +205,7 @@ public class TransportFactory {
             return new GrpcCallbackServerImpl(callbackPort);
         }
     }
+    */
 
     /**
      * Example: HTTP transport provider (not implemented yet).
