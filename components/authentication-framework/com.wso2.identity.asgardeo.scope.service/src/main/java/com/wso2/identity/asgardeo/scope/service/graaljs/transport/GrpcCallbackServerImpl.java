@@ -74,46 +74,83 @@ public class GrpcCallbackServerImpl implements CallbackServer {
      * @param port Port to bind (0 for automatic port selection)
      */
     public GrpcCallbackServerImpl(int port) {
+        log.info("[GrpcCallbackServerImpl] ========== CONSTRUCTOR ==========");
+        log.info("[GrpcCallbackServerImpl] Creating callback server with port: " + port);
+        log.info("[GrpcCallbackServerImpl] Instance hashCode: " + System.identityHashCode(this));
         this.connectionManager = GrpcConnectionManager.getInstance();
         this.serviceImpl = new HostCallbackServiceImpl();
         this.port = port;
-        log.debug("[GrpcCallbackServerImpl] Created with port: " + port);
+        log.info("[GrpcCallbackServerImpl] sessionHandlers map hashCode: " + System.identityHashCode(sessionHandlers));
+        log.info("[GrpcCallbackServerImpl] ========== CONSTRUCTOR COMPLETED ==========");
     }
 
     @Override
     public void registerHandler(String sessionId, HostFunctionHandler handler) {
-        log.debug("[GrpcCallbackServerImpl] Registering handler for session: " + sessionId);
+        log.info("[GrpcCallbackServerImpl] ========== registerHandler() ==========");
+        log.info("[GrpcCallbackServerImpl] Registering handler for session: " + sessionId);
+        log.info("[GrpcCallbackServerImpl] Handler type: " + (handler != null ? handler.getClass().getName() : "NULL"));
+        log.info("[GrpcCallbackServerImpl] CallbackServer instance hashCode: " + System.identityHashCode(this));
+        log.info("[GrpcCallbackServerImpl] sessionHandlers map hashCode: " + System.identityHashCode(sessionHandlers));
+        log.info("[GrpcCallbackServerImpl] BEFORE - registered sessions: " + sessionHandlers.keySet());
+        log.info("[GrpcCallbackServerImpl] BEFORE - session count: " + sessionHandlers.size());
+
         sessionHandlers.put(sessionId, handler);
+
+        log.info("[GrpcCallbackServerImpl] AFTER - registered sessions: " + sessionHandlers.keySet());
+        log.info("[GrpcCallbackServerImpl] AFTER - session count: " + sessionHandlers.size());
+        log.info("[GrpcCallbackServerImpl] Handler registered successfully for session: " + sessionId);
+        log.info("[GrpcCallbackServerImpl] ========== registerHandler() COMPLETED ==========");
     }
 
     @Override
     public void unregisterHandler(String sessionId) {
-        log.debug("[GrpcCallbackServerImpl] Unregistering handler for session: " + sessionId);
-        sessionHandlers.remove(sessionId);
+        log.info("[GrpcCallbackServerImpl] ========== unregisterHandler() ==========");
+        log.info("[GrpcCallbackServerImpl] Unregistering handler for session: " + sessionId);
+        log.info("[GrpcCallbackServerImpl] CallbackServer instance hashCode: " + System.identityHashCode(this));
+        log.info("[GrpcCallbackServerImpl] BEFORE - registered sessions: " + sessionHandlers.keySet());
+
+        HostFunctionHandler removed = sessionHandlers.remove(sessionId);
+
+        log.info("[GrpcCallbackServerImpl] Removed handler: " + (removed != null ? "YES" : "NO (was not registered)"));
+        log.info("[GrpcCallbackServerImpl] AFTER - registered sessions: " + sessionHandlers.keySet());
+        log.info("[GrpcCallbackServerImpl] ========== unregisterHandler() COMPLETED ==========");
     }
 
     @Override
     public String getCallbackAddress() {
-        return connectionManager.getCallbackAddress();
+        String address = connectionManager.getCallbackAddress();
+        log.info("[GrpcCallbackServerImpl] getCallbackAddress() returning: " + address);
+        return address;
     }
 
     @Override
     public void start() throws IOException {
+        log.info("[GrpcCallbackServerImpl] ========== start() ==========");
+        log.info("[GrpcCallbackServerImpl] CallbackServer instance hashCode: " + System.identityHashCode(this));
+        log.info("[GrpcCallbackServerImpl] isCallbackServerStarted: " + connectionManager.isCallbackServerStarted());
+
         if (!connectionManager.isCallbackServerStarted()) {
-            log.info("[GrpcCallbackServerImpl] Starting gRPC callback server");
+            log.info("[GrpcCallbackServerImpl] Starting NEW gRPC callback server on port: " + port);
             server = connectionManager.getCallbackServer(serviceImpl, port);
             port = server.getPort(); // Update with actual port if 0 was used
-            log.info("[GrpcCallbackServerImpl] gRPC callback server started on port: " + port);
+            log.info("[GrpcCallbackServerImpl] gRPC callback server started successfully!");
+            log.info("[GrpcCallbackServerImpl] Actual port: " + port);
+            log.info("[GrpcCallbackServerImpl] Callback address: " + getCallbackAddress());
         } else {
-            log.debug("[GrpcCallbackServerImpl] gRPC callback server already started");
+            log.info("[GrpcCallbackServerImpl] gRPC callback server ALREADY started - reusing existing");
+            log.info("[GrpcCallbackServerImpl] Current registered sessions: " + sessionHandlers.keySet());
         }
+        log.info("[GrpcCallbackServerImpl] ========== start() COMPLETED ==========");
     }
 
     @Override
     public void close() throws IOException {
-        log.debug("[GrpcCallbackServerImpl] Close called (server lifecycle managed by GrpcConnectionManager)");
+        log.info("[GrpcCallbackServerImpl] ========== close() ==========");
+        log.info("[GrpcCallbackServerImpl] Close called - server lifecycle managed by GrpcConnectionManager");
+        log.info("[GrpcCallbackServerImpl] Current registered sessions: " + sessionHandlers.keySet());
         // Note: We don't close the shared server here - it's managed by GrpcConnectionManager
         // This allows multiple RemoteJsEngine instances to share the same callback server
+        log.info("[GrpcCallbackServerImpl] ========== close() COMPLETED ==========");
     }
 
     /**
@@ -128,15 +165,40 @@ public class GrpcCallbackServerImpl implements CallbackServer {
             String sessionId = request.getSessionId();
             String functionName = request.getFunctionName();
 
-            log.info("[GrpcCallbackServer] invokeHostFunction: " + functionName +
-                    ", session: " + sessionId + ", args: " + request.getArgumentsCount());
+            log.info("[GrpcCallbackServer] ========== invokeHostFunction() RECEIVED ==========");
+            log.info("[GrpcCallbackServer] Function: " + functionName);
+            log.info("[GrpcCallbackServer] Session: " + sessionId);
+            log.info("[GrpcCallbackServer] Arguments count: " + request.getArgumentsCount());
+            log.info("[GrpcCallbackServer] CallbackServer hashCode: " +
+                    System.identityHashCode(GrpcCallbackServerImpl.this));
+            log.info("[GrpcCallbackServer] sessionHandlers map hashCode: " + System.identityHashCode(sessionHandlers));
+            log.info("[GrpcCallbackServer] Currently registered sessions: " + sessionHandlers.keySet());
+            log.info("[GrpcCallbackServer] Session count: " + sessionHandlers.size());
+
+            // Log each argument
+            for (int i = 0; i < request.getArgumentsCount(); i++) {
+                SerializedValue sv = request.getArguments(i);
+                log.info("[GrpcCallbackServer] Argument[" + i + "] valueCase: " + sv.getValueCase());
+                if (sv.getValueCase() == SerializedValue.ValueCase.STRING_VALUE) {
+                    String strVal = sv.getStringValue();
+                    log.info("[GrpcCallbackServer] Argument[" + i + "] string preview: " +
+                            strVal.substring(0, Math.min(100, strVal.length())) + "...");
+                }
+            }
 
             try {
                 // Get handler for session
+                log.info("[GrpcCallbackServer] Looking up handler for session: " + sessionId);
                 HostFunctionHandler handler = sessionHandlers.get(sessionId);
+
                 if (handler == null) {
                     String errorMsg = "No handler registered for session: " + sessionId;
-                    log.error("[GrpcCallbackServer] " + errorMsg);
+                    log.error("[GrpcCallbackServer] ==========================================");
+                    log.error("[GrpcCallbackServer] HANDLER NOT FOUND!");
+                    log.error("[GrpcCallbackServer] Requested session: " + sessionId);
+                    log.error("[GrpcCallbackServer] Available sessions: " + sessionHandlers.keySet());
+                    log.error("[GrpcCallbackServer] Session count: " + sessionHandlers.size());
+                    log.error("[GrpcCallbackServer] ==========================================");
                     responseObserver.onNext(HostFunctionResponse.newBuilder()
                             .setSuccess(false)
                             .setErrorMessage(errorMsg)
@@ -145,28 +207,43 @@ public class GrpcCallbackServerImpl implements CallbackServer {
                     return;
                 }
 
+                log.info("[GrpcCallbackServer] Handler FOUND for session: " + sessionId);
+                log.info("[GrpcCallbackServer] Handler type: " + handler.getClass().getName());
+
                 // Deserialize arguments
+                log.info("[GrpcCallbackServer] Deserializing " + request.getArgumentsCount() + " arguments...");
                 List<Object> args = new ArrayList<>();
-                for (SerializedValue sv : request.getArgumentsList()) {
+                for (int i = 0; i < request.getArgumentsCount(); i++) {
+                    SerializedValue sv = request.getArguments(i);
                     Object deserializedArg = ProtobufSerializer.fromProto(sv);
                     args.add(deserializedArg);
+                    log.info("[GrpcCallbackServer] Deserialized arg[" + i + "]: " +
+                            (deserializedArg != null ? deserializedArg.getClass().getSimpleName() : "null"));
                 }
 
                 // Invoke handler
+                log.info("[GrpcCallbackServer] >>> Invoking handler." + functionName +
+                        "() with " + args.size() + " args");
                 Object result = handler.invokeHostFunction(functionName, args.toArray());
+                log.info("[GrpcCallbackServer] <<< Handler returned: " +
+                        (result != null ? result.getClass().getSimpleName() : "null"));
 
                 // Build response
+                log.info("[GrpcCallbackServer] Serializing result to proto...");
                 HostFunctionResponse response = HostFunctionResponse.newBuilder()
                         .setSuccess(true)
                         .setResult(ProtobufSerializer.toProto(result))
                         .build();
 
+                log.info("[GrpcCallbackServer] Sending response back to sidecar...");
                 responseObserver.onNext(response);
                 responseObserver.onCompleted();
 
-                log.info("[GrpcCallbackServer] invokeHostFunction completed successfully");
+                log.info("[GrpcCallbackServer] ========== invokeHostFunction() COMPLETED SUCCESSFULLY ==========");
 
             } catch (Exception e) {
+                log.error("[GrpcCallbackServer] ========== invokeHostFunction() FAILED ==========");
+                log.error("[GrpcCallbackServer] Exception type: " + e.getClass().getName());
                 log.error("[GrpcCallbackServer] Error invoking host function: " + functionName, e);
                 responseObserver.onNext(HostFunctionResponse.newBuilder()
                         .setSuccess(false)
@@ -181,15 +258,22 @@ public class GrpcCallbackServerImpl implements CallbackServer {
                                         StreamObserver<ContextPropertyResponse> responseObserver) {
             String sessionId = request.getSessionId();
             String propertyPath = request.getPropertyPath();
+            String proxyType = request.getProxyType();
 
-            log.debug("[GrpcCallbackServer] getContextProperty: " + propertyPath + ", session: " + sessionId);
+            log.info("[GrpcCallbackServer] ========== getContextProperty() RECEIVED ==========");
+            log.info("[GrpcCallbackServer] PropertyPath: " + propertyPath);
+            log.info("[GrpcCallbackServer] ProxyType: " + proxyType);
+            log.info("[GrpcCallbackServer] Session: " + sessionId);
+            log.info("[GrpcCallbackServer] Currently registered sessions: " + sessionHandlers.keySet());
 
             try {
                 // Get handler for session
                 HostFunctionHandler handler = sessionHandlers.get(sessionId);
                 if (handler == null) {
                     String errorMsg = "No handler registered for session: " + sessionId;
-                    log.error("[GrpcCallbackServer] " + errorMsg);
+                    log.error("[GrpcCallbackServer] HANDLER NOT FOUND for getContextProperty!");
+                    log.error("[GrpcCallbackServer] Requested session: " + sessionId);
+                    log.error("[GrpcCallbackServer] Available sessions: " + sessionHandlers.keySet());
                     responseObserver.onNext(ContextPropertyResponse.newBuilder()
                             .setSuccess(false)
                             .setErrorMessage(errorMsg)
@@ -198,8 +282,12 @@ public class GrpcCallbackServerImpl implements CallbackServer {
                     return;
                 }
 
+                log.info("[GrpcCallbackServer] Handler found, getting property: " + propertyPath);
+
                 // Get property value
                 Object value = handler.getContextProperty(propertyPath);
+                log.info("[GrpcCallbackServer] Property value type: " +
+                        (value != null ? value.getClass().getName() : "null"));
 
                 // Build response
                 ContextPropertyResponse.Builder responseBuilder = ContextPropertyResponse.newBuilder()
@@ -209,27 +297,38 @@ public class GrpcCallbackServerImpl implements CallbackServer {
                     // Check if value is a proxy type
                     boolean isProxy = isProxyType(value);
                     responseBuilder.setIsProxy(isProxy);
+                    log.info("[GrpcCallbackServer] Value isProxy: " + isProxy);
 
                     if (isProxy) {
-                        responseBuilder.setProxyType(getProxyType(value));
+                        String valueProxyType = getProxyType(value);
+                        responseBuilder.setProxyType(valueProxyType);
+                        log.info("[GrpcCallbackServer] Setting proxyType: " + valueProxyType);
+
                         // Add member keys if available
                         if (value instanceof org.graalvm.polyglot.proxy.ProxyObject) {
                             Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) value).getMemberKeys();
                             if (keys instanceof String[]) {
-                                for (String key : (String[]) keys) {
+                                String[] keyArray = (String[]) keys;
+                                log.info("[GrpcCallbackServer] Adding " + keyArray.length + " member keys");
+                                for (String key : keyArray) {
                                     responseBuilder.addMemberKeys(key);
                                 }
                             }
                         }
                     } else {
+                        log.info("[GrpcCallbackServer] Serializing non-proxy value to proto...");
                         responseBuilder.setValue(ProtobufSerializer.toProto(value));
                     }
+                } else {
+                    log.info("[GrpcCallbackServer] Property value is null");
                 }
 
                 responseObserver.onNext(responseBuilder.build());
                 responseObserver.onCompleted();
+                log.info("[GrpcCallbackServer] ========== getContextProperty() COMPLETED ==========");
 
             } catch (Exception e) {
+                log.error("[GrpcCallbackServer] ========== getContextProperty() FAILED ==========");
                 log.error("[GrpcCallbackServer] Error getting context property: " + propertyPath, e);
                 responseObserver.onNext(ContextPropertyResponse.newBuilder()
                         .setSuccess(false)
@@ -245,14 +344,20 @@ public class GrpcCallbackServerImpl implements CallbackServer {
             String sessionId = request.getSessionId();
             String propertyPath = request.getPropertyPath();
 
-            log.info("[GrpcCallbackServer] setContextProperty: " + propertyPath + ", session: " + sessionId);
+            log.info("[GrpcCallbackServer] ========== setContextProperty() RECEIVED ==========");
+            log.info("[GrpcCallbackServer] PropertyPath: " + propertyPath);
+            log.info("[GrpcCallbackServer] Session: " + sessionId);
+            log.info("[GrpcCallbackServer] Value valueCase: " + request.getValue().getValueCase());
+            log.info("[GrpcCallbackServer] Currently registered sessions: " + sessionHandlers.keySet());
 
             try {
                 // Get handler for session
                 HostFunctionHandler handler = sessionHandlers.get(sessionId);
                 if (handler == null) {
                     String errorMsg = "No handler registered for session: " + sessionId;
-                    log.error("[GrpcCallbackServer] " + errorMsg);
+                    log.error("[GrpcCallbackServer] HANDLER NOT FOUND for setContextProperty!");
+                    log.error("[GrpcCallbackServer] Requested session: " + sessionId);
+                    log.error("[GrpcCallbackServer] Available sessions: " + sessionHandlers.keySet());
                     responseObserver.onNext(ContextPropertySetResponse.newBuilder()
                             .setSuccess(false)
                             .setErrorMessage(errorMsg)
@@ -261,11 +366,17 @@ public class GrpcCallbackServerImpl implements CallbackServer {
                     return;
                 }
 
+                log.info("[GrpcCallbackServer] Handler found, deserializing value...");
+
                 // Deserialize value
                 Object javaValue = ProtobufSerializer.fromProto(request.getValue());
+                log.info("[GrpcCallbackServer] Deserialized value type: " +
+                        (javaValue != null ? javaValue.getClass().getSimpleName() : "null"));
 
                 // Set property
+                log.info("[GrpcCallbackServer] Setting property: " + propertyPath);
                 boolean success = handler.setContextProperty(propertyPath, javaValue);
+                log.info("[GrpcCallbackServer] Set property result: " + success);
 
                 // Build response
                 ContextPropertySetResponse response = ContextPropertySetResponse.newBuilder()
@@ -274,8 +385,10 @@ public class GrpcCallbackServerImpl implements CallbackServer {
 
                 responseObserver.onNext(response);
                 responseObserver.onCompleted();
+                log.info("[GrpcCallbackServer] ========== setContextProperty() COMPLETED ==========");
 
             } catch (Exception e) {
+                log.error("[GrpcCallbackServer] ========== setContextProperty() FAILED ==========");
                 log.error("[GrpcCallbackServer] Error setting context property: " + propertyPath, e);
                 responseObserver.onNext(ContextPropertySetResponse.newBuilder()
                         .setSuccess(false)
@@ -290,15 +403,18 @@ public class GrpcCallbackServerImpl implements CallbackServer {
          */
         private boolean isProxyType(Object value) {
             if (value == null) {
+                log.info("[GrpcCallbackServer] isProxyType: value is null, returning false");
                 return false;
             }
             String className = value.getClass().getName();
-            return className.contains("JsGraal") ||
+            boolean result = className.contains("JsGraal") ||
                    className.contains("JsServlet") ||
                    className.contains("JsStep") ||
                    className.contains("JsAuthenticated") ||
                    className.contains("JsWritable") ||
                    value instanceof org.graalvm.polyglot.proxy.ProxyObject;
+            log.info("[GrpcCallbackServer] isProxyType: className=" + className + ", result=" + result);
+            return result;
         }
 
         /**
@@ -306,12 +422,16 @@ public class GrpcCallbackServerImpl implements CallbackServer {
          */
         private String getProxyType(Object value) {
             String className = value.getClass().getSimpleName();
+            String result;
             if (className.startsWith("JsGraal")) {
-                return className.substring(7).toLowerCase();
+                result = className.substring(7).toLowerCase();
             } else if (className.startsWith("Js")) {
-                return className.substring(2).toLowerCase();
+                result = className.substring(2).toLowerCase();
+            } else {
+                result = className.toLowerCase();
             }
-            return className.toLowerCase();
+            log.info("[GrpcCallbackServer] getProxyType: className=" + className + ", result=" + result);
+            return result;
         }
     }
 }

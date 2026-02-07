@@ -81,13 +81,42 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
         this.requestTimeout = requestTimeout;
         this.connectionManager = GrpcConnectionManager.getInstance();
         this.correlationId = UUID.randomUUID().toString();
-        log.debug("[GrpcTransportImpl] Created for target: " + grpcTarget +
+        log.info("[GrpcTransportImpl] ========== CONSTRUCTOR ==========");
+        log.info("[GrpcTransportImpl] Created for target: " + grpcTarget +
                 ", timeout: " + requestTimeout + "s, correlationId: " + correlationId);
+        log.info("[GrpcTransportImpl] Instance hashCode: " + System.identityHashCode(this));
     }
 
     @Override
     public EvaluateResponse sendEvaluate(EvaluateRequest request) throws IOException {
-        log.debug("[GrpcTransportImpl] Sending evaluate request for session: " + request.getSessionId());
+        log.info("[GrpcTransportImpl] ========== sendEvaluate() CALLED ==========");
+        log.info("[GrpcTransportImpl] Session: " + request.getSessionId());
+        log.info("[GrpcTransportImpl] Target: " + grpcTarget + ", Timeout: " + requestTimeout + "s");
+        log.info("[GrpcTransportImpl] CorrelationId: " + correlationId);
+        log.info("[GrpcTransportImpl] Script length: " + request.getScript().length() + " chars");
+        log.info("[GrpcTransportImpl] Script preview: " +
+                request.getScript().substring(0, Math.min(200, request.getScript().length())) + "...");
+        log.info("[GrpcTransportImpl] Bindings count: " + request.getBindingsCount());
+        log.info("[GrpcTransportImpl] Bindings keys: " + request.getBindingsMap().keySet());
+        log.info("[GrpcTransportImpl] Host functions count: " + request.getHostFunctionsCount());
+        for (int i = 0; i < request.getHostFunctionsCount(); i++) {
+            log.info("[GrpcTransportImpl] Host function[" + i + "]: " + request.getHostFunctions(i).getName());
+        }
+        log.info("[GrpcTransportImpl] Callback socket path: " + request.getCallbackSocketPath());
+        log.info("[GrpcTransportImpl] Source identifier: " + request.getSourceIdentifier());
+        log.info("[GrpcTransportImpl] Statement limit: " + request.getStatementLimit());
+        if (request.hasContextData()) {
+            log.info("[GrpcTransportImpl] ContextData present:");
+            log.info("[GrpcTransportImpl]   - sessionContextKey: " + request.getContextData().getSessionContextKey());
+            log.info("[GrpcTransportImpl]   - currentStep: " + request.getContextData().getCurrentStep());
+            log.info("[GrpcTransportImpl]   - username: " + request.getContextData().getUsername());
+            log.info("[GrpcTransportImpl]   - userStoreDomain: " + request.getContextData().getUserStoreDomain());
+            log.info("[GrpcTransportImpl]   - tenantDomain: " + request.getContextData().getTenantDomain());
+            log.info("[GrpcTransportImpl]   - roles: " + request.getContextData().getRolesList());
+            log.info("[GrpcTransportImpl]   - claims count: " + request.getContextData().getClaimsCount());
+        } else {
+            log.info("[GrpcTransportImpl] ContextData: NOT PRESENT");
+        }
 
         try {
             ensureStub();
@@ -97,21 +126,37 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
                     blockingStub.withDeadlineAfter(requestTimeout, TimeUnit.SECONDS);
 
             // Call RPC
+            log.info("[GrpcTransportImpl] >>> Sending gRPC Evaluate request to sidecar at " + grpcTarget + " ...");
             long startTime = System.currentTimeMillis();
             EvaluateResponse response = stubWithDeadline.evaluate(request);
             long elapsed = System.currentTimeMillis() - startTime;
 
-            log.debug("[GrpcTransportImpl] Evaluate request completed in " + elapsed + "ms, " +
-                    "success: " + response.getSuccess());
+            log.info("[GrpcTransportImpl] <<< Received gRPC Evaluate response");
+            log.info("[GrpcTransportImpl] ========== sendEvaluate() RESPONSE ==========");
+            log.info("[GrpcTransportImpl] Network elapsed: " + elapsed + "ms");
+            log.info("[GrpcTransportImpl] Response success: " + response.getSuccess());
+            log.info("[GrpcTransportImpl] Sidecar elapsed (from response): " + response.getElapsedMs() + "ms");
+            if (!response.getSuccess()) {
+                log.error("[GrpcTransportImpl] ERROR in response - message: " + response.getErrorMessage());
+                log.error("[GrpcTransportImpl] ERROR in response - type: " + response.getErrorType());
+            }
+            log.info("[GrpcTransportImpl] Updated bindings count: " + response.getUpdatedBindingsCount());
+            log.info("[GrpcTransportImpl] Updated bindings keys: " + response.getUpdatedBindingsMap().keySet());
+            log.info("[GrpcTransportImpl] Result valueCase: " + response.getResult().getValueCase());
+            log.info("[GrpcTransportImpl] ========== sendEvaluate() COMPLETED ==========");
 
             return response;
 
         } catch (StatusRuntimeException e) {
             String errorMsg = "gRPC evaluate request failed: " + e.getStatus().getDescription();
-            log.error("[GrpcTransportImpl] " + errorMsg, e);
+            log.error("[GrpcTransportImpl] StatusRuntimeException during evaluate");
+            log.error("[GrpcTransportImpl] Status code: " + e.getStatus().getCode());
+            log.error("[GrpcTransportImpl] Status description: " + e.getStatus().getDescription());
+            log.error("[GrpcTransportImpl] Full status: " + e.getStatus(), e);
             throw new IOException(errorMsg, e);
         } catch (Exception e) {
             String errorMsg = "Unexpected error during evaluate request: " + e.getMessage();
+            log.error("[GrpcTransportImpl] Exception type: " + e.getClass().getName());
             log.error("[GrpcTransportImpl] " + errorMsg, e);
             throw new IOException(errorMsg, e);
         }
@@ -119,7 +164,32 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
 
     @Override
     public ExecuteCallbackResponse sendExecuteCallback(ExecuteCallbackRequest request) throws IOException {
-        log.debug("[GrpcTransportImpl] Sending executeCallback request for session: " + request.getSessionId());
+        log.info("[GrpcTransportImpl] ========== sendExecuteCallback() CALLED ==========");
+        log.info("[GrpcTransportImpl] Session: " + request.getSessionId());
+        log.info("[GrpcTransportImpl] Target: " + grpcTarget + ", Timeout: " + requestTimeout + "s");
+        log.info("[GrpcTransportImpl] CorrelationId: " + correlationId);
+        log.info("[GrpcTransportImpl] Function source length: " + request.getFunctionSource().length() + " chars");
+        log.info("[GrpcTransportImpl] Function source preview: " +
+                request.getFunctionSource().substring(0, Math.min(200, request.getFunctionSource().length())) + "...");
+        log.info("[GrpcTransportImpl] Arguments count: " + request.getArgumentsCount());
+        for (int i = 0; i < request.getArgumentsCount(); i++) {
+            log.info("[GrpcTransportImpl] Argument[" + i + "] valueCase: " + request.getArguments(i).getValueCase());
+        }
+        log.info("[GrpcTransportImpl] Bindings count: " + request.getBindingsCount());
+        log.info("[GrpcTransportImpl] Bindings keys: " + request.getBindingsMap().keySet());
+        log.info("[GrpcTransportImpl] Host functions count: " + request.getHostFunctionsCount());
+        for (int i = 0; i < request.getHostFunctionsCount(); i++) {
+            log.info("[GrpcTransportImpl] Host function[" + i + "]: " + request.getHostFunctions(i).getName());
+        }
+        log.info("[GrpcTransportImpl] Callback socket path: " + request.getCallbackSocketPath());
+        if (request.hasContextData()) {
+            log.info("[GrpcTransportImpl] ContextData present:");
+            log.info("[GrpcTransportImpl]   - sessionContextKey: " + request.getContextData().getSessionContextKey());
+            log.info("[GrpcTransportImpl]   - currentStep: " + request.getContextData().getCurrentStep());
+            log.info("[GrpcTransportImpl]   - username: " + request.getContextData().getUsername());
+        } else {
+            log.info("[GrpcTransportImpl] ContextData: NOT PRESENT");
+        }
 
         try {
             ensureStub();
@@ -129,21 +199,36 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
                     blockingStub.withDeadlineAfter(requestTimeout, TimeUnit.SECONDS);
 
             // Call RPC
+            log.info("[GrpcTransportImpl] >>> Sending gRPC ExecuteCallback to " + grpcTarget + " ...");
             long startTime = System.currentTimeMillis();
             ExecuteCallbackResponse response = stubWithDeadline.executeCallback(request);
             long elapsed = System.currentTimeMillis() - startTime;
 
-            log.debug("[GrpcTransportImpl] ExecuteCallback request completed in " + elapsed + "ms, " +
-                    "success: " + response.getSuccess());
+            log.info("[GrpcTransportImpl] <<< Received gRPC ExecuteCallback response");
+            log.info("[GrpcTransportImpl] ========== sendExecuteCallback() RESPONSE ==========");
+            log.info("[GrpcTransportImpl] Network elapsed: " + elapsed + "ms");
+            log.info("[GrpcTransportImpl] Response success: " + response.getSuccess());
+            log.info("[GrpcTransportImpl] Sidecar elapsed (from response): " + response.getElapsedMs() + "ms");
+            if (!response.getSuccess()) {
+                log.error("[GrpcTransportImpl] ERROR in response - message: " + response.getErrorMessage());
+            }
+            log.info("[GrpcTransportImpl] Updated bindings count: " + response.getUpdatedBindingsCount());
+            log.info("[GrpcTransportImpl] Updated bindings keys: " + response.getUpdatedBindingsMap().keySet());
+            log.info("[GrpcTransportImpl] Result valueCase: " + response.getResult().getValueCase());
+            log.info("[GrpcTransportImpl] ========== sendExecuteCallback() COMPLETED ==========");
 
             return response;
 
         } catch (StatusRuntimeException e) {
             String errorMsg = "gRPC executeCallback request failed: " + e.getStatus().getDescription();
-            log.error("[GrpcTransportImpl] " + errorMsg, e);
+            log.error("[GrpcTransportImpl] StatusRuntimeException during executeCallback");
+            log.error("[GrpcTransportImpl] Status code: " + e.getStatus().getCode());
+            log.error("[GrpcTransportImpl] Status description: " + e.getStatus().getDescription());
+            log.error("[GrpcTransportImpl] Full status: " + e.getStatus(), e);
             throw new IOException(errorMsg, e);
         } catch (Exception e) {
             String errorMsg = "Unexpected error during executeCallback request: " + e.getMessage();
+            log.error("[GrpcTransportImpl] Exception type: " + e.getClass().getName());
             log.error("[GrpcTransportImpl] " + errorMsg, e);
             throw new IOException(errorMsg, e);
         }
@@ -151,10 +236,13 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
 
     @Override
     public void connect() throws IOException {
-        log.debug("[GrpcTransportImpl] Connecting to gRPC target: " + grpcTarget);
+        log.info("[GrpcTransportImpl] ========== connect() CALLED ==========");
+        log.info("[GrpcTransportImpl] Connecting to gRPC target: " + grpcTarget);
+        log.info("[GrpcTransportImpl] CorrelationId: " + correlationId);
         try {
             ensureStub();
             log.info("[GrpcTransportImpl] Connected successfully to: " + grpcTarget);
+            log.info("[GrpcTransportImpl] ========== connect() COMPLETED ==========");
         } catch (Exception e) {
             String errorMsg = "Failed to connect to gRPC target: " + grpcTarget;
             log.error("[GrpcTransportImpl] " + errorMsg, e);
@@ -164,29 +252,41 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
 
     @Override
     public boolean isConnected() {
-        return connectionManager.isClientChannelConnected() && blockingStub != null;
+        boolean channelConnected = connectionManager.isClientChannelConnected();
+        boolean stubExists = blockingStub != null;
+        boolean result = channelConnected && stubExists;
+        log.info("[GrpcTransportImpl] isConnected() - channelConnected: " + channelConnected +
+                ", stubExists: " + stubExists + ", result: " + result);
+        return result;
     }
 
     @Override
     public void close() throws IOException {
-        log.debug("[GrpcTransportImpl] Closing gRPC transport");
+        log.info("[GrpcTransportImpl] ========== close() CALLED ==========");
+        log.info("[GrpcTransportImpl] Closing gRPC transport for correlationId: " + correlationId);
         // Note: We don't close the shared channel here - it's managed by GrpcConnectionManager
         // This allows multiple RemoteJsEngine instances to share the same channel
         blockingStub = null;
+        log.info("[GrpcTransportImpl] Blocking stub set to null (shared channel NOT closed)");
+        log.info("[GrpcTransportImpl] ========== close() COMPLETED ==========");
     }
 
     /**
      * Ensure blocking stub is initialized with channel and interceptors.
      */
     private void ensureStub() {
+        log.info("[GrpcTransportImpl] ensureStub() - current stub: " + (blockingStub == null ? "NULL" : "EXISTS"));
         if (blockingStub == null) {
-            log.debug("[GrpcTransportImpl] Initializing blocking stub");
+            log.info("[GrpcTransportImpl] Initializing NEW blocking stub for target: " + grpcTarget);
 
             // Get channel from connection manager
             ManagedChannel channel = connectionManager.getClientChannel(grpcTarget);
+            log.info("[GrpcTransportImpl] Got channel from connectionManager, channel state: " +
+                    (channel.isShutdown() ? "SHUTDOWN" : channel.isTerminated() ? "TERMINATED" : "ACTIVE"));
 
             // Create blocking stub
             blockingStub = JsEngineServiceGrpc.newBlockingStub(channel);
+            log.info("[GrpcTransportImpl] Created JsEngineService blocking stub");
 
             // Attach metadata interceptor for correlation ID
             Metadata metadata = new Metadata();
@@ -195,7 +295,9 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
 
             blockingStub = blockingStub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
 
-            log.debug("[GrpcTransportImpl] Blocking stub initialized with correlation ID: " + correlationId);
+            log.info("[GrpcTransportImpl] Blocking stub initialized with correlationId: " + correlationId);
+        } else {
+            log.info("[GrpcTransportImpl] Reusing existing blocking stub");
         }
     }
 
