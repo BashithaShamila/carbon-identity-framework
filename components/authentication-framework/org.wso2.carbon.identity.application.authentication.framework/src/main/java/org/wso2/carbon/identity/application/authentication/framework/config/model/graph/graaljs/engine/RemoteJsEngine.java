@@ -814,6 +814,28 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             return null;
         }
 
+        // IMPORTANT: Check for context proxy marker from sidecar.
+        // When the sidecar sends a DynamicContextProxy as an argument, it serializes it as a Map
+        // with special marker fields. We need to reconstruct the actual object from stored authContext.
+        if (arg instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = (Map<String, Object>) arg;
+            if (Boolean.TRUE.equals(map.get("__isContextProxy"))) {
+                String proxyType = (String) map.get("__proxyType");
+                String basePath = (String) map.get("__basePath");
+                log.info("[RemoteJsEngine] Received context proxy marker: type=" + proxyType +
+                        ", basePath=" + basePath);
+
+                // Reconstruct the actual object based on proxyType and basePath
+                Object reconstructed = reconstructFromContextProxy(proxyType, basePath, paramType);
+                if (reconstructed != null) {
+                    log.info("[RemoteJsEngine] Reconstructed " + reconstructed.getClass().getSimpleName() +
+                            " from context proxy marker");
+                    return reconstructed;
+                }
+            }
+        }
+
         // Handle JsAuthenticationContext - reconstruct from stored authContext.
         if (paramType.getSimpleName().contains("JsAuthenticationContext") ||
                 paramType.getSimpleName().contains("JsGraalAuthenticationContext")) {
@@ -893,6 +915,62 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
         // Direct assignment for compatible types.
         return arg;
+    }
+
+    /**
+     * Reconstruct a context object from a proxy marker sent by the sidecar.
+     * This handles nested properties like context.currentKnownSubject, context.steps[1], etc.
+     *
+     * @param proxyType The type of proxy (e.g., "context", "authenticateduser", "step")
+     * @param basePath  The path to the property (e.g., "", "currentKnownSubject", "steps.1")
+     * @param paramType The expected parameter type from the method signature
+     * @return The reconstructed object, or null if reconstruction fails
+     */
+    private Object reconstructFromContextProxy(String proxyType, String basePath, Class<?> paramType) {
+        JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
+
+        // If basePath is empty or null, return the full context
+        if (basePath == null || basePath.isEmpty()) {
+            log.info("[RemoteJsEngine] Reconstructing root context");
+            return jsContext;
+        }
+
+        // Navigate to the nested property
+        log.info("[RemoteJsEngine] Navigating to nested property: " + basePath);
+
+        try {
+            // Split the path and navigate
+            String[] pathParts = basePath.split("\\.");
+            Object current = jsContext;
+
+            for (String part : pathParts) {
+                if (current == null) {
+                    log.warn("[RemoteJsEngine] Null encountered while navigating path at: " + part);
+                    return null;
+                }
+
+                // Check if this is an array index (for steps[n])
+                if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                    int index = Integer.parseInt(part);
+                    current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(index);
+                } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                    // Navigate using getMember for proxy objects
+                    current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+                } else {
+                    log.warn("[RemoteJsEngine] Cannot navigate to '" + part + "' on type: " +
+                            current.getClass().getName());
+                    return null;
+                }
+            }
+
+            log.info("[RemoteJsEngine] Successfully navigated to: " + basePath +
+                    ", result type: " + (current != null ? current.getClass().getSimpleName() : "null"));
+            return current;
+
+        } catch (Exception e) {
+            log.error("[RemoteJsEngine] Error navigating to property '" + basePath + "': " + e.getMessage(), e);
+            return null;
+        }
     }
 
     private void ensureConnected() throws IOException {
