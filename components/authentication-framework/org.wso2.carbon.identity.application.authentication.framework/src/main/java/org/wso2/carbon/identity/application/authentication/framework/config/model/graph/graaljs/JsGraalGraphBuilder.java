@@ -1046,7 +1046,14 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                                 ", error: " + evalResult.getErrorMessage());
                         AuthGraphNode executingNode = (AuthGraphNode) authenticationContext
                                 .getProperty(PROP_CURRENT_NODE);
+                        // Create a proper FailNode with error information so user sees error page
                         FailNode failNode = new FailNode();
+                        failNode.setShowErrorPage(true);
+                        failNode.getFailureData().put("errorCode", "18013");
+                        failNode.getFailureData().put("errorMessage",
+                                "Script execution failed: " + evalResult.getErrorMessage());
+                        failNode.getFailureData().put("errorType",
+                                evalResult.getErrorType() != null ? evalResult.getErrorType() : "ScriptError");
                         attachToLeaf(executingNode, failNode);
                     }
                 } finally {
@@ -1068,7 +1075,13 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                         authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
                         jsFunction.getSource(), e);
                 AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
+                // Create a proper FailNode with error information so user sees error page
                 FailNode failNode = new FailNode();
+                failNode.setShowErrorPage(true);
+                failNode.getFailureData().put("errorCode", "18013");
+                String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getName();
+                failNode.getFailureData().put("errorMessage", "Script execution error: " + errorMessage);
+                failNode.getFailureData().put("errorType", e.getClass().getSimpleName());
                 attachToLeaf(executingNode, failNode);
             } finally {
                 contextForJs.remove();
@@ -1149,7 +1162,13 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                         authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
                         jsFunction.getSource(), e);
                 AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
+                // Create a proper FailNode with error information so user sees error page
                 FailNode failNode = new FailNode();
+                failNode.setShowErrorPage(true);
+                failNode.getFailureData().put("errorCode", "18013");
+                String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getName();
+                failNode.getFailureData().put("errorMessage", "Script execution error: " + errorMessage);
+                failNode.getFailureData().put("errorType", e.getClass().getSimpleName());
                 attachToLeaf(executingNode, failNode);
             } finally {
                 contextForJs.remove();

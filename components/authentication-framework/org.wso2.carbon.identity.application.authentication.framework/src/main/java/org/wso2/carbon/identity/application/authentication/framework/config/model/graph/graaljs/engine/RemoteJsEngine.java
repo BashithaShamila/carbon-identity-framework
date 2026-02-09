@@ -503,10 +503,18 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             }
 
             // Handle special case for array-like access (e.g., "steps.1")
-            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-                // Numeric index access - try to get as array element
+            // JsGraalSteps implements ProxyArray, so we need to use get(long) for numeric indices
+            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                // Numeric index access on ProxyArray (e.g., JsGraalSteps)
+                int index = Integer.parseInt(part);
+                org.graalvm.polyglot.proxy.ProxyArray proxyArray = (org.graalvm.polyglot.proxy.ProxyArray) current;
+                current = proxyArray.get(index);
+                log.debug("[RemoteJsEngine] Accessed array index " + index + " -> " +
+                        (current != null ? current.getClass().getSimpleName() : "null"));
+            } else if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                // Numeric index access on ProxyObject - try getMember with string key
                 org.graalvm.polyglot.proxy.ProxyObject proxy = (org.graalvm.polyglot.proxy.ProxyObject) current;
-                current = proxy.getMember(part); // Try numeric key as string
+                current = proxy.getMember(part);
             } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
                 // Standard member access
                 org.graalvm.polyglot.proxy.ProxyObject proxy = (org.graalvm.polyglot.proxy.ProxyObject) current;
