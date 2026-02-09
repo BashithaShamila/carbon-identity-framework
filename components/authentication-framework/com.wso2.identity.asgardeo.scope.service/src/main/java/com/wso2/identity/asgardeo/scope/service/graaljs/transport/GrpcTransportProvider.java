@@ -39,7 +39,7 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
 
     private static final Log log = LogFactory.getLog(GrpcTransportProvider.class);
 
-    private static volatile GrpcCallbackServerImpl callbackServerInstance;
+    private static volatile GrpcStreamingTransportImpl streamingInstance;
     private static final Object lock = new Object();
     private static int transportInstanceCount = 0;
 
@@ -50,8 +50,6 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
         log.info("[GrpcTransportProvider] Transport instance #" + transportInstanceCount);
         log.info("[GrpcTransportProvider] Config details - grpcTarget: " + config.getGrpcTarget() +
                 ", callbackPort: " + config.getCallbackPort());
-        log.info("[GrpcTransportProvider] Thread: " + Thread.currentThread().getName() +
-                ", ID: " + Thread.currentThread().getId());
 
         String grpcTarget = config.getGrpcTarget();
         if (grpcTarget == null || grpcTarget.isEmpty()) {
@@ -59,10 +57,12 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
             throw new IllegalArgumentException("gRPC target is required for GRPC transport");
         }
 
-        GrpcTransportImpl transport = new GrpcTransportImpl(grpcTarget);
-        log.info("[GrpcTransportProvider] Created GrpcTransportImpl for target: " + grpcTarget);
+        // Use singleton streaming transport (implements both transport and callback server)
+        GrpcStreamingTransportImpl instance = getOrCreateStreamingInstance(grpcTarget);
+        log.info("[GrpcTransportProvider] Returning streaming transport, hashCode=" +
+                System.identityHashCode(instance));
         log.info("[GrpcTransportProvider] ========== createTransport() COMPLETED ==========");
-        return transport;
+        return instance;
     }
 
     @Override
@@ -70,34 +70,33 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
         log.info("[GrpcTransportProvider] ========== createCallbackServer() CALLED ==========");
         log.info("[GrpcTransportProvider] Config details - callbackPort: " + config.getCallbackPort() +
                 ", grpcTarget: " + config.getGrpcTarget());
-        log.info("[GrpcTransportProvider] Thread: " + Thread.currentThread().getName() +
-                ", ID: " + Thread.currentThread().getId());
-        log.info("[GrpcTransportProvider] Current singleton instance: " +
-                (callbackServerInstance == null ? "NULL" : "EXISTS (hashCode=" +
-                        System.identityHashCode(callbackServerInstance) + ")"));
 
-        // Return singleton instance to ensure all sessions share the same callback server
-        if (callbackServerInstance == null) {
-            log.info("[GrpcTransportProvider] Singleton is NULL, acquiring lock...");
-            synchronized (lock) {
-                log.info("[GrpcTransportProvider] Lock acquired, double-checking...");
-                if (callbackServerInstance == null) {
-                    int callbackPort = config.getCallbackPort();
-                    log.info("[GrpcTransportProvider] Creating NEW GrpcCallbackServerImpl on port: " + callbackPort);
-                    callbackServerInstance = new GrpcCallbackServerImpl(callbackPort);
-                    log.info("[GrpcTransportProvider] NEW singleton created, hashCode=" +
-                            System.identityHashCode(callbackServerInstance));
-                } else {
-                    log.info("[GrpcTransportProvider] Another thread already created singleton");
-                }
-            }
-        } else {
-            log.info("[GrpcTransportProvider] Returning existing singleton instance");
+        String grpcTarget = config.getGrpcTarget();
+        if (grpcTarget == null || grpcTarget.isEmpty()) {
+            log.error("[GrpcTransportProvider] ERROR: gRPC target is null or empty!");
+            throw new IllegalArgumentException("gRPC target is required for GRPC transport");
         }
 
-        log.info("[GrpcTransportProvider] Returning callbackServer hashCode=" +
-                System.identityHashCode(callbackServerInstance));
+        // Return same streaming transport instance (it implements CallbackServer too)
+        GrpcStreamingTransportImpl instance = getOrCreateStreamingInstance(grpcTarget);
+        log.info("[GrpcTransportProvider] Returning streaming transport as callback server, hashCode=" +
+                System.identityHashCode(instance));
         log.info("[GrpcTransportProvider] ========== createCallbackServer() COMPLETED ==========");
-        return callbackServerInstance;
+        return instance;
+    }
+
+    private static GrpcStreamingTransportImpl getOrCreateStreamingInstance(String grpcTarget) {
+        if (streamingInstance == null) {
+            synchronized (lock) {
+                if (streamingInstance == null) {
+                    log.info("[GrpcTransportProvider] Creating NEW GrpcStreamingTransportImpl for target: " +
+                            grpcTarget);
+                    streamingInstance = new GrpcStreamingTransportImpl(grpcTarget);
+                    log.info("[GrpcTransportProvider] NEW singleton created, hashCode=" +
+                            System.identityHashCode(streamingInstance));
+                }
+            }
+        }
+        return streamingInstance;
     }
 }
