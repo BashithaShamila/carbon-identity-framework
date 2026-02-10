@@ -1035,6 +1035,14 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
 
                     if (evalResult.isSuccess()) {
                         result = evalResult.getResult();
+
+                        // Re-persist updated bindings so next callback sees changes
+                        // (e.g., dynamicFlag set in step 1 callback is available in step 2)
+                        Map<String, Object> updatedBindings = jsEngine.getBindings();
+                        authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", updatedBindings);
+                        log.info("[evaluateRemote] Re-persisted " + updatedBindings.size() +
+                                " bindings after callback");
+
                         if (log.isDebugEnabled()) {
                             log.debug("Remote JS execution succeeded for SP: " +
                                     authenticationContext.getServiceProviderName() +

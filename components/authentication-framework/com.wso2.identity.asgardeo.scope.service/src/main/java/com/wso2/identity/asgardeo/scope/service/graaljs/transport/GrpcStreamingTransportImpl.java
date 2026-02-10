@@ -432,6 +432,18 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             ContextPropertyResponse.Builder responseBuilder = ContextPropertyResponse.newBuilder()
                     .setSuccess(true);
 
+            // Handle __keys__ special path - value is the member keys array
+            if (propertyPath.endsWith("::__keys__") || "__keys__".equals(propertyPath)) {
+                if (value != null) {
+                    extractMemberKeys(value, responseBuilder);
+                }
+                sendOnStream(ctx, StreamMessage.newBuilder()
+                        .setSessionId(sessionId)
+                        .setContextPropertyResponse(responseBuilder.build())
+                        .build());
+                return;
+            }
+
             if (value != null) {
                 boolean isProxy = isProxyType(value);
                 responseBuilder.setIsProxy(isProxy);
@@ -440,11 +452,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                     responseBuilder.setProxyType(getProxyType(value));
                     if (value instanceof org.graalvm.polyglot.proxy.ProxyObject) {
                         Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) value).getMemberKeys();
-                        if (keys instanceof String[]) {
-                            for (String key : (String[]) keys) {
-                                responseBuilder.addMemberKeys(key);
-                            }
-                        }
+                        extractMemberKeys(keys, responseBuilder);
                     }
                 } else {
                     responseBuilder.setValue(ProtobufSerializer.toProto(value));
@@ -555,5 +563,24 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             return className.substring(2).toLowerCase();
         }
         return className.toLowerCase();
+    }
+
+    private void extractMemberKeys(Object keys, ContextPropertyResponse.Builder responseBuilder) {
+        if (keys instanceof String[]) {
+            for (String key : (String[]) keys) {
+                responseBuilder.addMemberKeys(key);
+            }
+        } else if (keys instanceof Object[]) {
+            for (Object key : (Object[]) keys) {
+                responseBuilder.addMemberKeys(String.valueOf(key));
+            }
+        } else if (keys instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+            org.graalvm.polyglot.proxy.ProxyArray proxyArray =
+                    (org.graalvm.polyglot.proxy.ProxyArray) keys;
+            long size = proxyArray.getSize();
+            for (long i = 0; i < size; i++) {
+                responseBuilder.addMemberKeys(String.valueOf(proxyArray.get(i)));
+            }
+        }
     }
 }

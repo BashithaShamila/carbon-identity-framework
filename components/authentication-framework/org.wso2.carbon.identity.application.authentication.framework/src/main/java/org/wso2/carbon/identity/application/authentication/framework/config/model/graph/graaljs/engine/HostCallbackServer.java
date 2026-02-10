@@ -339,6 +339,14 @@ public class HostCallbackServer implements Closeable {
                         .build();
             }
 
+            // Handle __keys__ special path - value is the member keys array
+            if (propertyPath.endsWith("::__keys__") || "__keys__".equals(propertyPath)) {
+                ContextPropertyResponse.Builder keysBuilder = ContextPropertyResponse.newBuilder()
+                        .setSuccess(true);
+                extractMemberKeys(value, keysBuilder);
+                return keysBuilder.build();
+            }
+
             // Determine if this is a proxy type that needs nested access
             boolean isProxy = isProxyType(value);
             String proxyType = isProxy ? getProxyType(value) : "";
@@ -358,11 +366,7 @@ public class HostCallbackServer implements Closeable {
             // Add member keys if this is a proxy type
             if (isProxy && value instanceof org.graalvm.polyglot.proxy.ProxyObject) {
                 Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) value).getMemberKeys();
-                if (keys instanceof String[]) {
-                    for (String key : (String[]) keys) {
-                        responseBuilder.addMemberKeys(key);
-                    }
-                }
+                extractMemberKeys(keys, responseBuilder);
             }
 
             log.info("[HostCallbackServer] Returning context property response - success: true, isProxy: " +
@@ -443,6 +447,28 @@ public class HostCallbackServer implements Closeable {
                 className.contains("JsAuthenticated") ||
                 className.contains("JsWritable") ||
                 value instanceof org.graalvm.polyglot.proxy.ProxyObject;
+    }
+
+    /**
+     * Extract member keys from various return types of getMemberKeys().
+     */
+    private void extractMemberKeys(Object keys, ContextPropertyResponse.Builder responseBuilder) {
+        if (keys instanceof String[]) {
+            for (String key : (String[]) keys) {
+                responseBuilder.addMemberKeys(key);
+            }
+        } else if (keys instanceof Object[]) {
+            for (Object key : (Object[]) keys) {
+                responseBuilder.addMemberKeys(String.valueOf(key));
+            }
+        } else if (keys instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+            org.graalvm.polyglot.proxy.ProxyArray proxyArray =
+                    (org.graalvm.polyglot.proxy.ProxyArray) keys;
+            long size = proxyArray.getSize();
+            for (long i = 0; i < size; i++) {
+                responseBuilder.addMemberKeys(String.valueOf(proxyArray.get(i)));
+            }
+        }
     }
 
     /**

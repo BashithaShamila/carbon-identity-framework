@@ -492,9 +492,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         // Create the JsGraalAuthenticationContext wrapper
         JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
 
-        // Navigate the property path: "request.params.foo" -> ["request", "params",
+        // Navigate the property path: "request::params::foo" -> ["request", "params",
         // "foo"]
-        String[] parts = propertyPath.split("\\.");
+        String[] parts = propertyPath.split("::");
         Object current = jsContext;
 
         for (String part : parts) {
@@ -502,7 +502,18 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 return null;
             }
 
-            // Handle special case for array-like access (e.g., "steps.1")
+            // Handle __keys__ special path - return member keys of current object
+            if ("__keys__".equals(part)) {
+                if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                    Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMemberKeys();
+                    log.debug("[RemoteJsEngine] __keys__ on proxy -> " +
+                            (keys != null ? keys.getClass().getSimpleName() : "null"));
+                    return keys;
+                }
+                return null;
+            }
+
+            // Handle special case for array-like access (e.g., "steps::1")
             // JsGraalSteps implements ProxyArray, so we need to use get(long) for numeric indices
             if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
                 // Numeric index access on ProxyArray (e.g., JsGraalSteps)
@@ -560,7 +571,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         // Navigate to the parent object and then set the final property
-        String[] parts = propertyPath.split("\\.");
+        String[] parts = propertyPath.split("::");
         if (parts.length == 0) {
             return false;
         }
