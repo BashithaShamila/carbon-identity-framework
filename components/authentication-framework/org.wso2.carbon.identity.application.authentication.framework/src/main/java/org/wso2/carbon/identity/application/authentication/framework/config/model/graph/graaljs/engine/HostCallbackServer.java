@@ -459,14 +459,31 @@ public class HostCallbackServer implements Closeable {
             }
         } else if (keys instanceof Object[]) {
             for (Object key : (Object[]) keys) {
-                responseBuilder.addMemberKeys(String.valueOf(key));
+                if (key instanceof String[]) {
+                    for (String s : (String[]) key) {
+                        responseBuilder.addMemberKeys(s);
+                    }
+                } else {
+                    responseBuilder.addMemberKeys(String.valueOf(key));
+                }
             }
         } else if (keys instanceof org.graalvm.polyglot.proxy.ProxyArray) {
             org.graalvm.polyglot.proxy.ProxyArray proxyArray =
                     (org.graalvm.polyglot.proxy.ProxyArray) keys;
             long size = proxyArray.getSize();
             for (long i = 0; i < size; i++) {
-                responseBuilder.addMemberKeys(String.valueOf(proxyArray.get(i)));
+                Object element = proxyArray.get(i);
+                if (element instanceof String[]) {
+                    for (String s : (String[]) element) {
+                        responseBuilder.addMemberKeys(s);
+                    }
+                } else if (element instanceof Object[]) {
+                    for (Object o : (Object[]) element) {
+                        responseBuilder.addMemberKeys(String.valueOf(o));
+                    }
+                } else {
+                    responseBuilder.addMemberKeys(String.valueOf(element));
+                }
             }
         }
     }

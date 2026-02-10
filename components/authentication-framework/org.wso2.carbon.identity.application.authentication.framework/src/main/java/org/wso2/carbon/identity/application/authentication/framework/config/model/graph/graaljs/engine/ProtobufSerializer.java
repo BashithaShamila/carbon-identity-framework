@@ -139,6 +139,42 @@ public class ProtobufSerializer {
                     .build();
         }
 
+        // Handle Java arrays (e.g., String[] from request params)
+        if (serializable.getClass().isArray()) {
+            Object[] arrayValue;
+            if (serializable instanceof Object[]) {
+                arrayValue = (Object[]) serializable;
+            } else {
+                // Primitive arrays - convert to Object[]
+                int length = java.lang.reflect.Array.getLength(serializable);
+                arrayValue = new Object[length];
+                for (int i = 0; i < length; i++) {
+                    arrayValue[i] = java.lang.reflect.Array.get(serializable, i);
+                }
+            }
+            SerializedArray.Builder arrayBuilder = SerializedArray.newBuilder();
+            for (Object element : arrayValue) {
+                arrayBuilder.addElements(toProto(element));
+            }
+            return SerializedValue.newBuilder()
+                    .setArrayValue(arrayBuilder.build())
+                    .build();
+        }
+
+        // Handle ProxyArray (e.g., from JsGraalParameters.processParameterMember)
+        if (serializable instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+            org.graalvm.polyglot.proxy.ProxyArray proxyArray =
+                    (org.graalvm.polyglot.proxy.ProxyArray) serializable;
+            SerializedArray.Builder arrayBuilder = SerializedArray.newBuilder();
+            long size = proxyArray.getSize();
+            for (long i = 0; i < size; i++) {
+                arrayBuilder.addElements(toProto(proxyArray.get(i)));
+            }
+            return SerializedValue.newBuilder()
+                    .setArrayValue(arrayBuilder.build())
+                    .build();
+        }
+
         // Fallback: convert to string
         return SerializedValue.newBuilder()
                 .setStringValue(serializable.toString())
