@@ -29,9 +29,14 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ExecuteCallbackResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionDefinition;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedValue;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.StepConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsWrapperFactoryProvider;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
+import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedIdPData;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
+
+import org.graalvm.polyglot.Value;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -558,7 +563,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     /**
      * Set a context property value (write-back from sidecar).
      * This navigates the property path and sets the value on the target object.
-     * Supports paths like: "currentKnownSubject.localClaims.email"
+     * Supports paths like: "steps::1::subject::claims::http://wso2.org/claims/email"
      */
     @Override
     public boolean setContextProperty(String propertyPath, Object value) throws Exception {
@@ -588,21 +593,48 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 return false;
             }
 
-            if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-                org.graalvm.polyglot.proxy.ProxyObject proxy = (org.graalvm.polyglot.proxy.ProxyObject) parent;
-                parent = proxy.getMember(part);
+            if (part.matches("\\d+")) {
+                // Numeric segment: try ProxyArray.get first, then reflection fallback
+                // for OSGi classloader issues where instanceof may not match
+                int index = Integer.parseInt(part);
+                if (parent instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                    parent = ((org.graalvm.polyglot.proxy.ProxyArray) parent).get(index);
+                } else {
+                    // Reflection fallback: call get(long) directly on the object
+                    try {
+                        java.lang.reflect.Method getMethod = parent.getClass().getMethod("get", long.class);
+                        parent = getMethod.invoke(parent, (long) index);
+                        log.info("[RemoteJsEngine] setContextProperty: used reflection get(" + index +
+                                ") on " + parent.getClass().getSimpleName());
+                    } catch (NoSuchMethodException nsme) {
+                        // Not a ProxyArray-like object, try ProxyObject.getMember
+                        if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                            parent = ((org.graalvm.polyglot.proxy.ProxyObject) parent).getMember(part);
+                        } else {
+                            log.warn("[RemoteJsEngine] Cannot navigate numeric segment: " + part +
+                                    " on type: " + parent.getClass().getName());
+                            return false;
+                        }
+                    } catch (Exception e) {
+                        log.warn("[RemoteJsEngine] Reflection get() failed for segment: " + part, e);
+                        return false;
+                    }
+                }
+            } else if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                parent = ((org.graalvm.polyglot.proxy.ProxyObject) parent).getMember(part);
             } else if (parent instanceof java.util.Map) {
                 @SuppressWarnings("unchecked")
                 java.util.Map<String, Object> map = (java.util.Map<String, Object>) parent;
                 parent = map.get(part);
             } else {
-                // Try reflection getter
+                // Try reflection getter as last resort
                 try {
                     String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
                     java.lang.reflect.Method getter = parent.getClass().getMethod(getterName);
                     parent = getter.invoke(parent);
                 } catch (NoSuchMethodException e) {
-                    log.warn("[RemoteJsEngine] Cannot navigate path segment: " + part);
+                    log.warn("[RemoteJsEngine] Cannot navigate path segment: " + part +
+                            " on type: " + parent.getClass().getName());
                     return false;
                 }
             }
@@ -617,25 +649,31 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         // Try different ways to set the property
+        // Option 2: Wrap plain Java value as GraalVM Value before calling putMember.
+        // This mirrors the original in-process engine behavior where putMember always
+        // received a GraalVM Value object.
         if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-            // ProxyObject.putMember requires a org.graalvm.polyglot.Value, not Object
-            // Our writable proxies (JsWritableParameters, JsClaims) implement putMember
-            // using the underlying data structure, so use reflection to call it
             try {
-                // Try to find and call a putMember method that accepts our value type
-                java.lang.reflect.Method[] methods = parent.getClass().getMethods();
-                for (java.lang.reflect.Method method : methods) {
-                    if ("putMember".equals(method.getName()) && method.getParameterCount() == 2) {
-                        Class<?>[] paramTypes = method.getParameterTypes();
-                        if (paramTypes[0] == String.class && paramTypes[1].isAssignableFrom(value.getClass())) {
-                            method.invoke(parent, finalPart, value);
-                            log.info("[RemoteJsEngine] Successfully set property via putMember: " + propertyPath);
-                            return true;
-                        }
-                    }
-                }
+                Value wrappedValue = Value.asValue(value);
+                ((org.graalvm.polyglot.proxy.ProxyObject) parent).putMember(finalPart, wrappedValue);
+                log.info("[RemoteJsEngine] Successfully set property via putMember: " + propertyPath);
+                return true;
             } catch (Exception e) {
-                log.debug("[RemoteJsEngine] putMember invocation failed: " + e.getMessage());
+                log.warn("[RemoteJsEngine] Direct putMember failed: " + e.getMessage());
+            }
+        } else {
+            // Reflection fallback for OSGi classloader issues where instanceof fails
+            try {
+                java.lang.reflect.Method putMethod = parent.getClass().getMethod(
+                        "putMember", String.class, Value.class);
+                Value wrappedValue = Value.asValue(value);
+                putMethod.invoke(parent, finalPart, wrappedValue);
+                log.info("[RemoteJsEngine] Successfully set property via reflection putMember: " + propertyPath);
+                return true;
+            } catch (NoSuchMethodException nsme) {
+                // No putMember(String, Value) method — fall through to other approaches
+            } catch (Exception e) {
+                log.warn("[RemoteJsEngine] Reflection putMember failed: " + e.getMessage());
             }
         }
 
@@ -927,8 +965,16 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         // Handle Map to Object conversion (for varargs with map/object arguments).
+        // Coerce whole-number Doubles to Integers inside Maps, since protobuf deserializes
+        // all numbers as Double but host function implementations expect Integer for values
+        // like max-age, port numbers, etc. (matching in-process GraalJS behavior).
         if (paramType == Object.class) {
-            // Keep as-is for Object type - the method will handle it.
+            if (arg instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> mapArg = (Map<String, Object>) arg;
+                log.info("[RemoteJsEngine] Coercing number types in Map with " + mapArg.size() + " entries");
+                return coerceMapNumberTypes(mapArg);
+            }
             return arg;
         }
 
@@ -937,30 +983,96 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     }
 
     /**
+     * Coerce whole-number Double values inside a Map to Integer.
+     * Creates a new mutable HashMap to avoid issues with immutable/protobuf maps.
+     * Protobuf deserializes all JS numbers as Double, but Java host functions
+     * expect Integer for integer-valued options (e.g., max-age in setCookie).
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> coerceMapNumberTypes(Map<String, Object> map) {
+        Map<String, Object> result = new HashMap<>(map);
+        for (Map.Entry<String, Object> entry : result.entrySet()) {
+            Object val = entry.getValue();
+            if (val instanceof Double) {
+                double d = (Double) val;
+                if (d == Math.floor(d) && !Double.isInfinite(d)) {
+                    // Whole number — convert to Integer (or Long if out of int range)
+                    if (d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
+                        entry.setValue((int) d);
+                        log.info("[RemoteJsEngine] Coerced " + entry.getKey() + ": " + d + " -> " + (int) d);
+                    } else {
+                        entry.setValue((long) d);
+                    }
+                }
+            } else if (val instanceof Map) {
+                entry.setValue(coerceMapNumberTypes((Map<String, Object>) val));
+            }
+        }
+        return result;
+    }
+
+    /**
      * Reconstruct a context object from a proxy marker sent by the sidecar.
      * This handles nested properties like context.currentKnownSubject, context.steps[1], etc.
      *
      * @param proxyType The type of proxy (e.g., "context", "authenticateduser", "step")
-     * @param basePath  The path to the property (e.g., "", "currentKnownSubject", "steps.1")
+     * @param basePath  The path to the property (e.g., "", "currentKnownSubject", "steps::1")
      * @param paramType The expected parameter type from the method signature
      * @return The reconstructed object, or null if reconstruction fails
      */
     private Object reconstructFromContextProxy(String proxyType, String basePath, Class<?> paramType) {
-        JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
 
         // If basePath is empty or null, return the full context
         if (basePath == null || basePath.isEmpty()) {
             log.info("[RemoteJsEngine] Reconstructing root context");
-            return jsContext;
+            return new JsGraalAuthenticationContext(authContext);
         }
 
-        // Navigate to the nested property
+        // Direct reconstruction for "authenticateduser" with path "steps::N::subject".
+        // This bypasses proxy navigation which can fail due to JsStep.getSubject() returning null
+        // when the IdP data lookup doesn't match, causing createJsAuthenticatedUser to throw.
+        if ("authenticateduser".equals(proxyType) && basePath.matches("steps::\\d+::subject")) {
+            String[] parts = basePath.split("::");
+            int stepNum = Integer.parseInt(parts[1]);
+            log.info("[RemoteJsEngine] Direct reconstruction of authenticateduser for step " + stepNum);
+
+            if (authContext.getSequenceConfig() != null) {
+                // Find the authenticated IDP for this step
+                String authenticatedIdp = null;
+                for (StepConfig sc : authContext.getSequenceConfig().getStepMap().values()) {
+                    if (sc.getOrder() == stepNum) {
+                        authenticatedIdp = sc.getAuthenticatedIdP();
+                        break;
+                    }
+                }
+
+                if (authenticatedIdp != null) {
+                    // Look up the user from authenticated IdP data (same logic as JsStep.getSubject())
+                    AuthenticatedIdPData idPData = authContext.getCurrentAuthenticatedIdPs().get(authenticatedIdp);
+                    if (idPData == null) {
+                        idPData = authContext.getPreviousAuthenticatedIdPs().get(authenticatedIdp);
+                    }
+                    if (idPData != null && idPData.getUser() != null) {
+                        Object result = JsWrapperFactoryProvider.getInstance().getWrapperFactory()
+                                .createJsAuthenticatedUser(authContext, idPData.getUser(), stepNum, authenticatedIdp);
+                        log.info("[RemoteJsEngine] Directly reconstructed " +
+                                result.getClass().getSimpleName() + " for step " + stepNum);
+                        return result;
+                    }
+                    log.warn("[RemoteJsEngine] No authenticated user found for IdP: " + authenticatedIdp +
+                            " in step " + stepNum);
+                } else {
+                    log.warn("[RemoteJsEngine] No authenticated IdP found for step " + stepNum);
+                }
+            }
+        }
+
+        // Generic proxy navigation fallback for other proxy types/paths
         log.info("[RemoteJsEngine] Navigating to nested property: " + basePath);
 
         try {
-            // Split the path and navigate
-            String[] pathParts = basePath.split("\\.");
-            Object current = jsContext;
+            String[] pathParts = basePath.split("::");
+            Object current = new JsGraalAuthenticationContext(authContext);
 
             for (String part : pathParts) {
                 if (current == null) {
@@ -968,12 +1080,26 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     return null;
                 }
 
-                // Check if this is an array index (for steps[n])
-                if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
-                    int index = Integer.parseInt(part);
-                    current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(index);
+                if (part.matches("\\d+")) {
+                    // Numeric segment: try ProxyArray.get first, then reflection fallback
+                    if (current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                        current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(Integer.parseInt(part));
+                    } else {
+                        // Reflection fallback for classloader issues where instanceof doesn't match
+                        try {
+                            java.lang.reflect.Method getMethod = current.getClass().getMethod("get", long.class);
+                            current = getMethod.invoke(current, (long) Integer.parseInt(part));
+                        } catch (NoSuchMethodException nsme) {
+                            if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+                            } else {
+                                log.warn("[RemoteJsEngine] Cannot navigate numeric segment '" + part +
+                                        "' on type: " + current.getClass().getName());
+                                return null;
+                            }
+                        }
+                    }
                 } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-                    // Navigate using getMember for proxy objects
                     current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
                 } else {
                     log.warn("[RemoteJsEngine] Cannot navigate to '" + part + "' on type: " +
