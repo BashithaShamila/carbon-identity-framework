@@ -29,6 +29,7 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertySetResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedProxyObject;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedValue;
 
 import java.io.Closeable;
@@ -293,9 +294,18 @@ public class HostCallbackServer implements Closeable {
             Object result = handler.invokeHostFunction(functionName, args.toArray());
             log.info("[HostCallbackServer] Host function returned: " +
                     (result != null ? result.getClass().getName() : "null"));
+
+            SerializedValue serializedResult;
+            if (result != null && isProxyType(result)) {
+                // Complex object: store reference and return as SerializedProxyObject
+                serializedResult = serializeAsProxyObject(result, handler);
+            } else {
+                serializedResult = ProtobufSerializer.toProto(result);
+            }
+
             return HostFunctionResponse.newBuilder()
                     .setSuccess(true)
-                    .setResult(ProtobufSerializer.toProto(result))
+                    .setResult(serializedResult)
                     .build();
         } catch (Exception e) {
             log.error("[HostCallbackServer] Error invoking host function: " + functionName, e);
@@ -431,6 +441,27 @@ public class HostCallbackServer implements Closeable {
                     .setErrorMessage(e.getMessage())
                     .build();
         }
+    }
+
+    /**
+     * Serialize a complex host function result as a SerializedProxyObject.
+     * Stores the object reference on the handler for later property access via __hostref__ paths.
+     */
+    private SerializedValue serializeAsProxyObject(Object result,
+                                                    CallbackServer.HostFunctionHandler handler) {
+        String refId = handler.storeObjectReference(result);
+        String proxyType = getProxyType(result);
+
+        log.info("[HostCallbackServer] Serializing complex result as proxy: type=" + proxyType +
+                ", refId=" + refId);
+
+        SerializedProxyObject.Builder proxyBuilder = SerializedProxyObject.newBuilder()
+                .setType(proxyType)
+                .setReferenceId(refId != null ? refId : "");
+
+        return SerializedValue.newBuilder()
+                .setProxyObject(proxyBuilder.build())
+                .build();
     }
 
     /**

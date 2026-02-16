@@ -65,6 +65,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     // from multiple threads (e.g., main execution thread + callback handler threads)
     private final Map<String, Object> bindings = new ConcurrentHashMap<>();
     private final Map<String, Object> hostFunctions = new ConcurrentHashMap<>();
+    private final Map<String, Object> hostFunctionRefs = new ConcurrentHashMap<>();
     private boolean closed = false;
     private boolean handlerRegistered = false;
 
@@ -481,13 +482,33 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
     }
 
+    @Override
+    public String storeObjectReference(Object obj) {
+        String refId = UUID.randomUUID().toString();
+        hostFunctionRefs.put(refId, obj);
+        log.debug("[RemoteJsEngine] Stored object reference: " + refId +
+                " -> " + (obj != null ? obj.getClass().getSimpleName() : "null"));
+        return refId;
+    }
+
+    @Override
+    public Object resolveObjectReference(String refId) {
+        return hostFunctionRefs.get(refId);
+    }
+
     /**
      * Get a context property value for the dynamic context proxy.
      * This navigates the property path on the real JsGraalAuthenticationContext.
+     * Also supports host function return references via "__hostref__" prefix.
      */
     @Override
     public Object getContextProperty(String propertyPath) throws Exception {
         log.debug("[RemoteJsEngine] getContextProperty called: " + propertyPath + ", session: " + sessionId);
+
+        // Handle host function return references: "__hostref__::<refId>::<property>"
+        if (propertyPath.startsWith("__hostref__::")) {
+            return getHostRefProperty(propertyPath.substring("__hostref__::".length()));
+        }
 
         if (authContext == null) {
             log.warn("[RemoteJsEngine] No authContext available for property access");
@@ -561,14 +582,76 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     }
 
     /**
+     * Navigate a property path on a stored host function return reference.
+     * Path format: "<refId>" or "<refId>::<property>::<subprop>..."
+     */
+    private Object getHostRefProperty(String path) {
+        String[] parts = path.split("::");
+        String refId = parts[0];
+        Object current = hostFunctionRefs.get(refId);
+
+        if (current == null) {
+            log.warn("[RemoteJsEngine] No host function ref found for ID: " + refId);
+            return null;
+        }
+
+        // Navigate remaining parts (skip refId at index 0)
+        for (int i = 1; i < parts.length; i++) {
+            String part = parts[i];
+            if (current == null) {
+                return null;
+            }
+
+            if ("__keys__".equals(part)) {
+                if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                    return ((org.graalvm.polyglot.proxy.ProxyObject) current).getMemberKeys();
+                }
+                return null;
+            }
+
+            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(Integer.parseInt(part));
+            } else if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+                current = map.get(part);
+            } else {
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = current.getClass().getMethod(getterName);
+                    current = getter.invoke(current);
+                } catch (NoSuchMethodException | IllegalAccessException |
+                         java.lang.reflect.InvocationTargetException e) {
+                    log.debug("[RemoteJsEngine] No getter for host ref property: " + part);
+                    return null;
+                }
+            }
+        }
+
+        log.debug("[RemoteJsEngine] getHostRefProperty '" + path + "' = " +
+                (current != null ? current.getClass().getSimpleName() : "null"));
+        return current;
+    }
+
+    /**
      * Set a context property value (write-back from sidecar).
      * This navigates the property path and sets the value on the target object.
      * Supports paths like: "steps::1::subject::claims::http://wso2.org/claims/email"
+     * Also supports host function return references via "__hostref__" prefix.
      */
     @Override
     public boolean setContextProperty(String propertyPath, Object value) throws Exception {
         log.info("[RemoteJsEngine] setContextProperty called: " + propertyPath + " = " +
                 (value != null ? value.getClass().getSimpleName() : "null") + ", session: " + sessionId);
+
+        // Handle host function return references
+        if (propertyPath.startsWith("__hostref__::")) {
+            return setHostRefProperty(propertyPath.substring("__hostref__::".length()), value);
+        }
 
         if (authContext == null) {
             log.warn("[RemoteJsEngine] No authContext available for property write");
@@ -701,6 +784,78 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         log.warn("[RemoteJsEngine] Could not set property: " + propertyPath);
+        return false;
+    }
+
+    /**
+     * Set a property on a stored host function return reference.
+     * Path format: "<refId>::<property>::<subprop>..."
+     */
+    private boolean setHostRefProperty(String path, Object value) {
+        String[] parts = path.split("::");
+        if (parts.length < 2) {
+            log.warn("[RemoteJsEngine] setHostRefProperty requires at least refId and property: " + path);
+            return false;
+        }
+
+        String refId = parts[0];
+        Object current = hostFunctionRefs.get(refId);
+        if (current == null) {
+            log.warn("[RemoteJsEngine] No host function ref found for ID: " + refId);
+            return false;
+        }
+
+        // Navigate to parent (all parts except the last one, starting after refId)
+        for (int i = 1; i < parts.length - 1; i++) {
+            String part = parts[i];
+            if (current == null) {
+                return false;
+            }
+
+            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(Integer.parseInt(part));
+            } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+                current = map.get(part);
+            } else {
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = current.getClass().getMethod(getterName);
+                    current = getter.invoke(current);
+                } catch (Exception e) {
+                    log.warn("[RemoteJsEngine] Cannot navigate host ref path segment: " + part);
+                    return false;
+                }
+            }
+        }
+
+        if (current == null) {
+            return false;
+        }
+
+        // Set the final property
+        String finalPart = parts[parts.length - 1];
+        if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+            try {
+                Value wrappedValue = Value.asValue(value);
+                ((org.graalvm.polyglot.proxy.ProxyObject) current).putMember(finalPart, wrappedValue);
+                log.info("[RemoteJsEngine] Successfully set host ref property: " + path);
+                return true;
+            } catch (Exception e) {
+                log.warn("[RemoteJsEngine] putMember failed on host ref: " + e.getMessage());
+            }
+        }
+        if (current instanceof java.util.Map) {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+            map.put(finalPart, value);
+            return true;
+        }
+
+        log.warn("[RemoteJsEngine] Could not set host ref property: " + path);
         return false;
     }
 

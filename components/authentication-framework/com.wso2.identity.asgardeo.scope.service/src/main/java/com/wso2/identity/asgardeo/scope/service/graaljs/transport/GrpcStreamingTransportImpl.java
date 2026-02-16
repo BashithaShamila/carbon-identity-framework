@@ -35,6 +35,7 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ExecuteCallbackResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedProxyObject;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedValue;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.StreamMessage;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.grpc.JsEngineStreamingServiceGrpc;
@@ -379,12 +380,29 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             log.info("[GrpcStreaming] Host function " + functionName + " returned: " +
                     (result != null ? result.getClass().getSimpleName() : "null"));
 
+            // Serialize result: use proxy object for complex types, primitive serialization otherwise
+            SerializedValue serializedResult;
+            if (result != null && isProxyType(result)) {
+                String refId = handler.storeObjectReference(result);
+                String proxyType = getProxyType(result);
+                log.info("[GrpcStreaming] Serializing complex result as proxy: type=" + proxyType +
+                        ", refId=" + refId);
+                serializedResult = SerializedValue.newBuilder()
+                        .setProxyObject(SerializedProxyObject.newBuilder()
+                                .setType(proxyType)
+                                .setReferenceId(refId != null ? refId : "")
+                                .build())
+                        .build();
+            } else {
+                serializedResult = ProtobufSerializer.toProto(result);
+            }
+
             // Send response back on stream
             sendOnStream(ctx, StreamMessage.newBuilder()
                     .setSessionId(sessionId)
                     .setHostFunctionResponse(HostFunctionResponse.newBuilder()
                             .setSuccess(true)
-                            .setResult(ProtobufSerializer.toProto(result))
+                            .setResult(serializedResult)
                             .build())
                     .build());
 
@@ -545,7 +563,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     }
 
     private boolean isProxyType(Object value) {
-        if (value == null) return false;
+        if (value == null) {
+            return false;
+        }
         String className = value.getClass().getName();
         return className.contains("JsGraal") ||
                className.contains("JsServlet") ||

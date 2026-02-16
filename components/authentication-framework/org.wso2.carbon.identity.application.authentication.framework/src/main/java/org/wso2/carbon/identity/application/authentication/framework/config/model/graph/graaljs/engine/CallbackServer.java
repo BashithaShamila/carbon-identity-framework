@@ -124,5 +124,27 @@ public interface CallbackServer extends Closeable {
         default boolean setContextProperty(String propertyPath, Object value) throws Exception {
             return false;
         }
+
+        /**
+         * Store a complex object reference for later property access via the context proxy path.
+         * Used when host functions return complex objects (e.g., JsGraalAuthenticatedUser) that
+         * cannot be serialized as primitives and need to be accessed via dynamic proxy on the sidecar.
+         *
+         * @param obj The complex object to store.
+         * @return A unique reference ID for the stored object, or null if not supported.
+         */
+        default String storeObjectReference(Object obj) {
+            return null;
+        }
+
+        /**
+         * Resolve a previously stored object reference.
+         *
+         * @param refId The reference ID returned by {@link #storeObjectReference(Object)}.
+         * @return The stored object, or null if not found.
+         */
+        default Object resolveObjectReference(String refId) {
+            return null;
+        }
     }
 }
