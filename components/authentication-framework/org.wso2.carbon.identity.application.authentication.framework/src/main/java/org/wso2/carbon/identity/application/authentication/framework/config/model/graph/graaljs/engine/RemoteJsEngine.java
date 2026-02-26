@@ -21,6 +21,7 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.AuthGraphNode;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGraphBuilder;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphBuilder;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextData;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.EvaluateRequest;
@@ -66,6 +67,13 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     private final Map<String, Object> bindings = new ConcurrentHashMap<>();
     private final Map<String, Object> hostFunctions = new ConcurrentHashMap<>();
     private final Map<String, Object> hostFunctionRefs = new ConcurrentHashMap<>();
+    private JsGraphBuilder graphBuilder;
+    // Accumulated dynamicallyBuiltBaseNode across gRPC callbacks.
+    // In local mode, the dynamicallyBuiltBaseNode ThreadLocal accumulates nodes across
+    // host function calls within a single callback execution (same thread). In remote mode,
+    // each gRPC callback runs on a separate thread, so we persist the value here between
+    // setupThreadContext/clearThreadContext pairs to replicate local mode behavior.
+    private volatile AuthGraphNode accumulatedDynamicBaseNode;
     private boolean closed = false;
     private boolean handlerRegistered = false;
 
@@ -86,6 +94,38 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 ", transport: " + transport.getClass().getSimpleName() +
                 ", callbackServer: " + callbackServer.getClass().getSimpleName() +
                 ", SP: " + (authContext != null ? authContext.getServiceProviderName() : "null"));
+    }
+
+    /**
+     * Set the graph builder reference for this engine.
+     * This is needed so that gRPC callback threads can set the currentBuilder ThreadLocal,
+     * which is required by static methods like JsGraphBuilder.addLongWaitProcess().
+     *
+     * @param graphBuilder The JsGraphBuilder instance to use for callback thread context.
+     */
+    public void setGraphBuilder(JsGraphBuilder graphBuilder) {
+        this.graphBuilder = graphBuilder;
+        log.debug("[RemoteJsEngine] Graph builder set: " +
+                (graphBuilder != null ? graphBuilder.getClass().getSimpleName() : "null"));
+    }
+
+    /**
+     * Get the accumulated dynamicallyBuiltBaseNode value.
+     * This is the value accumulated across gRPC callbacks, replicating
+     * the local mode ThreadLocal behavior across threads.
+     *
+     * @return The accumulated AuthGraphNode, or null if none was built.
+     */
+    public AuthGraphNode getAccumulatedDynamicBaseNode() {
+        return accumulatedDynamicBaseNode;
+    }
+
+    /**
+     * Reset the accumulated dynamicallyBuiltBaseNode.
+     * Should be called before a new callback evaluation cycle begins.
+     */
+    public void resetAccumulatedDynamicBaseNode() {
+        this.accumulatedDynamicBaseNode = null;
     }
 
     @Override
@@ -892,16 +932,27 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 log.info("[RemoteJsEngine] Set contextForJs ThreadLocal with authContext: " +
                         authContext.getContextIdentifier());
 
-                // Get and set the current executing node from the authentication context.
-                // This is used by executeStepInAsyncEvent to build the authentication graph.
-                Object currentNode = authContext.getProperty("Adaptive.Auth.Current.Graph.Node");
-                if (currentNode instanceof AuthGraphNode) {
-                    JsGraalGraphBuilder.setDynamicallyBuiltBaseNodeThreadLocal((AuthGraphNode) currentNode);
-                    log.info("[RemoteJsEngine] Set dynamicallyBuiltBaseNode ThreadLocal: " +
-                            currentNode.getClass().getSimpleName());
+                // Set dynamicallyBuiltBaseNode from accumulated value across gRPC callbacks.
+                // In local mode, this ThreadLocal starts null during callback execution and
+                // accumulates nodes via executeStepInAsyncEvent across calls on the same thread.
+                // In remote mode, each gRPC callback runs on a separate thread, so we persist
+                // the value in accumulatedDynamicBaseNode between setup/clear pairs to replicate
+                // the local mode single-thread accumulation behavior.
+                if (accumulatedDynamicBaseNode != null) {
+                    JsGraalGraphBuilder.setDynamicallyBuiltBaseNodeThreadLocal(accumulatedDynamicBaseNode);
+                    log.info("[RemoteJsEngine] Set dynamicallyBuiltBaseNode from accumulated: " +
+                            accumulatedDynamicBaseNode.getClass().getSimpleName());
                 } else {
-                    log.warn("[RemoteJsEngine] PROP_CURRENT_NODE not found or wrong type in authContext. " +
-                            "Type: " + (currentNode != null ? currentNode.getClass().getName() : "null"));
+                    log.debug("[RemoteJsEngine] dynamicallyBuiltBaseNode accumulated is null (initial state)");
+                }
+
+                // Set currentBuilder ThreadLocal for the gRPC callback thread.
+                // This is required by static methods like JsGraphBuilder.addLongWaitProcess()
+                // which are used by async host functions (e.g., updateUserPassword).
+                if (graphBuilder != null) {
+                    JsGraalGraphBuilder.setCurrentBuilderThreadLocal(graphBuilder);
+                    log.info("[RemoteJsEngine] Set currentBuilder ThreadLocal: " +
+                            graphBuilder.getClass().getSimpleName());
                 }
 
             } catch (Exception e) {
@@ -914,10 +965,18 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      * Clear thread-local context after host function invocation.
      */
     private void clearThreadContext() {
-        // Clear JsGraalGraphBuilder thread-local contexts.
+        // Save dynamicallyBuiltBaseNode before clearing, so it accumulates across
+        // gRPC callbacks (replicating local mode's single-thread behavior).
         try {
+            AuthGraphNode currentDynamicNode = JsGraalGraphBuilder.getDynamicallyBuiltBaseNodeThreadLocal();
+            if (currentDynamicNode != null) {
+                this.accumulatedDynamicBaseNode = currentDynamicNode;
+                log.info("[RemoteJsEngine] Saved dynamicallyBuiltBaseNode to accumulated: " +
+                        currentDynamicNode.getClass().getSimpleName());
+            }
             JsGraalGraphBuilder.removeContextForJsThreadLocal();
             JsGraalGraphBuilder.removeDynamicallyBuiltBaseNodeThreadLocal();
+            JsGraalGraphBuilder.removeCurrentBuilderThreadLocal();
             log.debug("[RemoteJsEngine] Cleared JsGraalGraphBuilder ThreadLocals");
         } catch (Exception e) {
             log.debug("[RemoteJsEngine] Error clearing thread context: " + e.getMessage());
@@ -980,13 +1039,19 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
     /**
      * Handle varargs method argument adaptation.
+     * Filters out null values from the varargs portion, since in remote mode
+     * JavaScript undefined/null placeholder arguments get serialized as explicit nulls
+     * through the gRPC chain. In local GraalJS mode, these would either be omitted or
+     * handled differently by the type conversion system. Methods like httpGet(String, Object...)
+     * validate varargs with instanceof checks (e.g., params[0] instanceof Map), so null
+     * entries cause IllegalArgumentException.
      */
     private Object[] adaptVarArgsMethod(java.lang.reflect.Method method, Class<?>[] paramTypes, Object[] args) {
         int fixedParamCount = paramTypes.length - 1;
         Class<?> varArgType = paramTypes[fixedParamCount].getComponentType();
 
         log.info("[RemoteJsEngine] Adapting varargs method: fixedParams=" + fixedParamCount +
-                ", varArgType=" + varArgType.getSimpleName());
+                ", varArgType=" + varArgType.getSimpleName() + ", totalArgs=" + args.length);
 
         Object[] adaptedArgs = new Object[paramTypes.length];
 
@@ -998,16 +1063,29 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             adaptedArgs[i] = adaptSingleArgument(args[i], paramTypes[i]);
         }
 
-        // Collect remaining arguments into varargs array.
-        int varArgCount = args.length - fixedParamCount;
-        if (varArgCount > 0) {
-            Object[] varArgs = (Object[]) java.lang.reflect.Array.newInstance(varArgType, varArgCount);
-            for (int i = 0; i < varArgCount; i++) {
-                int srcIndex = fixedParamCount + i;
-                log.info("[RemoteJsEngine] Adapting vararg[" + i + "] from " +
-                        (args[srcIndex] != null ? args[srcIndex].getClass().getSimpleName() : "null") +
-                        " to " + varArgType.getSimpleName());
-                varArgs[i] = adaptSingleArgument(args[srcIndex], varArgType);
+        // Collect remaining arguments into varargs array, filtering out null values.
+        // Null values in varargs come from JavaScript undefined/null being serialized
+        // through the gRPC chain. In local mode, GraalJS handles these differently
+        // (e.g., not passing them as separate arguments). Filtering nulls ensures
+        // the varargs array matches what the method expects.
+        java.util.List<Object> nonNullVarArgs = new java.util.ArrayList<>();
+        for (int i = fixedParamCount; i < args.length; i++) {
+            if (args[i] != null) {
+                Object adapted = adaptSingleArgument(args[i], varArgType);
+                nonNullVarArgs.add(adapted);
+                log.info("[RemoteJsEngine] Adapting vararg[" + (i - fixedParamCount) + "] from " +
+                        args[i].getClass().getSimpleName() + " to " + varArgType.getSimpleName());
+            } else {
+                log.info("[RemoteJsEngine] Skipping null vararg at index " + i +
+                        " (undefined/null from remote serialization)");
+            }
+        }
+
+        if (!nonNullVarArgs.isEmpty()) {
+            Object[] varArgs = (Object[]) java.lang.reflect.Array.newInstance(
+                    varArgType, nonNullVarArgs.size());
+            for (int i = 0; i < nonNullVarArgs.size(); i++) {
+                varArgs[i] = nonNullVarArgs.get(i);
             }
             adaptedArgs[fixedParamCount] = varArgs;
         } else {
@@ -1015,6 +1093,8 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             adaptedArgs[fixedParamCount] = java.lang.reflect.Array.newInstance(varArgType, 0);
         }
 
+        log.info("[RemoteJsEngine] Final varargs count: " + nonNullVarArgs.size() +
+                " (from " + (args.length - fixedParamCount) + " raw args)");
         return adaptedArgs;
     }
 

@@ -46,6 +46,7 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.EvaluationResult;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngine;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngineFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteJsEngine;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
@@ -321,6 +322,11 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         try (JsEngine jsEngine = JsEngineFactory.getInstance().createEngine(authenticationContext)) {
             currentBuilder.set(this);
             contextForJs.set(authenticationContext);
+
+            // Set graph builder on remote engine so gRPC callback threads can set currentBuilder ThreadLocal.
+            if (jsEngine instanceof RemoteJsEngine) {
+                ((RemoteJsEngine) jsEngine).setGraphBuilder(this);
+            }
 
             log.info("[createWithRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
                     ", contextId: " + authenticationContext.getContextIdentifier());
@@ -975,6 +981,11 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 currentBuilder.set(graphBuilder);
                 JsGraalGraphBuilder.contextForJs.set(authenticationContext);
 
+                // Set graph builder on remote engine so gRPC callback threads can set currentBuilder ThreadLocal.
+                if (jsEngine instanceof RemoteJsEngine) {
+                    ((RemoteJsEngine) jsEngine).setGraphBuilder(graphBuilder);
+                }
+
                 // Log context info for debugging.
                 log.info("[evaluateRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
                         ", contextId: " + authenticationContext.getContextIdentifier() +
@@ -1026,6 +1037,13 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     startScriptExecutionMonitor(identifier, authenticationContext,
                             optionalScriptExecutionData.orElse(null));
 
+                    // Reset accumulated dynamic base node before callback execution.
+                    // This ensures a clean slate for each callback cycle, matching local mode
+                    // where dynamicallyBuiltBaseNode starts null at callback entry.
+                    if (jsEngine instanceof RemoteJsEngine) {
+                        ((RemoteJsEngine) jsEngine).resetAccumulatedDynamicBaseNode();
+                    }
+
                     // Execute the callback function in the sidecar with persisted bindings
                     EvaluationResult evalResult = jsEngine.executeCallback(
                             jsFunction.getSource(),
@@ -1071,6 +1089,20 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                         scriptExecutionData ->
                                 storeAuthScriptExecutionMonitorData(authenticationContext,
                                 scriptExecutionData));
+
+                // Propagate accumulated dynamicallyBuiltBaseNode from gRPC threads to main thread.
+                // In remote mode, gRPC callbacks built dynamic nodes (via executeStepInAsyncEvent,
+                // failAsync, sendErrorAsync) on separate threads. The accumulated value was
+                // persisted in RemoteJsEngine across those calls. Set it on the main thread's
+                // ThreadLocal so canInfuse/infuse work the same as in local mode.
+                if (jsEngine instanceof RemoteJsEngine) {
+                    AuthGraphNode accumulated = ((RemoteJsEngine) jsEngine).getAccumulatedDynamicBaseNode();
+                    if (accumulated != null) {
+                        dynamicallyBuiltBaseNode.set(accumulated);
+                        log.info("[evaluateRemote] Propagated accumulated dynamicBaseNode to main thread: " +
+                                accumulated.getClass().getSimpleName());
+                    }
+                }
 
                 AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
                 if (canInfuse(executingNode)) {

@@ -175,7 +175,22 @@ public class ProtobufSerializer {
                     .build();
         }
 
+        // Handle AbstractJSObjectWrapper types (JsGraalWritableParameters, JsGraalParameters, etc.)
+        // These wrap Maps but don't implement the Map interface, so they fall through the Map check above.
+        // Extract the wrapped Map and serialize it directly. This is critical for callback arguments
+        // like the httpGet response data (JsGraalWritableParameters wrapping the HTTP JSON response).
+        if (serializable instanceof org.wso2.carbon.identity.application.authentication.framework
+                .config.model.graph.js.AbstractJSObjectWrapper) {
+            Object wrapped = ((org.wso2.carbon.identity.application.authentication.framework
+                    .config.model.graph.js.AbstractJSObjectWrapper<?>) serializable).getWrapped();
+            if (wrapped instanceof Map) {
+                return toProto(wrapped);
+            }
+        }
+
         // Fallback: convert to string
+        log.warn("Falling back to toString() serialization for type: " +
+                serializable.getClass().getName() + " = " + serializable);
         return SerializedValue.newBuilder()
                 .setStringValue(serializable.toString())
                 .build();

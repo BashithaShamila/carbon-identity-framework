@@ -56,16 +56,18 @@ import java.util.concurrent.TimeoutException;
 /**
  * Bidirectional streaming gRPC transport implementation.
  * Implements both RemoteEngineTransport (for sending requests) and CallbackServer
- * (for receiving callbacks) over a single bidirectional gRPC stream.
+ * (for receiving callbacks) over a per-session bidirectional gRPC stream.
  * <p>
- * This eliminates the need for a separate callback server and dynamic port,
- * making the communication Istio/service-mesh friendly with mTLS support.
+ * Each sendEvaluate()/sendExecuteCallback() call opens its own HTTP/2 stream.
+ * This gives each session its own lock, its own stream lifecycle, and avoids
+ * contention between concurrent sessions. The stream closes after the response
+ * is received (between async authentication steps).
  * <p>
  * Thread model:
  * - IS HTTP thread calls sendEvaluate()/sendExecuteCallback() and blocks on CompletableFuture
  * - gRPC event thread receives StreamMessage via onNext()
  * - Callback executor handles host function/context property requests
- * - All sends to the stream are synchronized via streamLock
+ * - All sends to a session's stream are synchronized via that session's lock
  */
 public class GrpcStreamingTransportImpl implements RemoteEngineTransport, CallbackServer {
 
@@ -81,7 +83,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     private JsEngineStreamingServiceGrpc.JsEngineStreamingServiceStub asyncStub;
 
     public GrpcStreamingTransportImpl(String grpcTarget) {
-        this(grpcTarget, 30);
+        this(grpcTarget, 5);
     }
 
     public GrpcStreamingTransportImpl(String grpcTarget, int requestTimeout) {
@@ -115,13 +117,16 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                 .setEvaluateRequest(request)
                 .build();
 
+        // CRITICAL FIX: Register stream context BEFORE sending the request.
+        // This eliminates the race condition where a callback from the sidecar
+        // could arrive before the stream context was registered, causing the
+        // callback handler to silently drop the response (-> 30s timeout).
+        streamRegistry.put(sessionId, new StreamContext(outboundStream, lock));
+
         synchronized (lock) {
             outboundStream.onNext(streamMsg);
         }
         log.info("[GrpcStreaming] Sent EvaluateRequest on stream, session: " + sessionId);
-
-        // Store outbound stream for callback responses
-        streamRegistry.put(sessionId, new StreamContext(outboundStream, lock));
 
         try {
             EvaluateResponse response = evalFuture.get(requestTimeout, TimeUnit.SECONDS);
@@ -167,13 +172,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                 .setExecuteCallbackRequest(request)
                 .build();
 
+        // CRITICAL FIX: Register stream context BEFORE sending the request.
+        streamRegistry.put(sessionId, new StreamContext(outboundStream, lock));
+
         synchronized (lock) {
             outboundStream.onNext(streamMsg);
         }
         log.info("[GrpcStreaming] Sent ExecuteCallbackRequest on stream, session: " + sessionId);
-
-        // Store outbound stream for callback responses
-        streamRegistry.put(sessionId, new StreamContext(outboundStream, lock));
 
         try {
             ExecuteCallbackResponse response = callbackFuture.get(requestTimeout, TimeUnit.SECONDS);
@@ -215,8 +220,10 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
     @Override
     public void close() throws IOException {
-        log.info("[GrpcStreaming] close() - clearing stub, correlationId: " + correlationId);
-        asyncStub = null;
+        log.info("[GrpcStreaming] close() called - singleton transport, stub remains active, " +
+                "correlationId: " + correlationId);
+        // Don't null out asyncStub - this is a singleton transport shared across all sessions.
+        // Per-session cleanup is handled by unregisterHandler() and stream onCompleted() in finally.
     }
 
     // ============ CallbackServer Methods ============
