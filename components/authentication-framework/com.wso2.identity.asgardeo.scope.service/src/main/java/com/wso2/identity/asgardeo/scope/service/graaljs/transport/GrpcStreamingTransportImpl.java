@@ -100,6 +100,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     @Override
     public EvaluateResponse sendEvaluate(EvaluateRequest request) throws IOException {
         String sessionId = request.getSessionId();
+        long t0 = System.currentTimeMillis();
+        System.out.println("[PERF] [" + t0 + "] IS EVALUATE_START session=" + sessionId +
+                " startTs=" + t0 + " scriptLen=" + request.getScript().length());
         log.info("[GrpcStreaming] sendEvaluate() - session: " + sessionId +
                 ", script length: " + request.getScript().length());
 
@@ -108,8 +111,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         CompletableFuture<EvaluateResponse> evalFuture = new CompletableFuture<>();
         final Object lock = new Object();
 
+        long t1 = System.currentTimeMillis();
         StreamObserver<StreamMessage> outboundStream = asyncStub.executeScript(
-                createResponseObserver(sessionId, evalFuture, null, lock));
+                createResponseObserver(sessionId, evalFuture, null, lock, t0));
+        long t2 = System.currentTimeMillis();
+        System.out.println("[PERF] [" + t2 + "] IS STREAM_OPENED session=" + sessionId +
+                " startTs=" + t0 + " stubReadyTs=" + t1 + " streamOpenedTs=" + t2 +
+                " openMs=" + (t2 - t1) + " sinceStartMs=" + (t2 - t0));
 
         // Send the evaluate request
         StreamMessage streamMsg = StreamMessage.newBuilder()
@@ -118,27 +126,41 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                 .build();
 
         // CRITICAL FIX: Register stream context BEFORE sending the request.
-        // This eliminates the race condition where a callback from the sidecar
-        // could arrive before the stream context was registered, causing the
-        // callback handler to silently drop the response (-> 30s timeout).
         streamRegistry.put(sessionId, new StreamContext(outboundStream, lock));
 
         synchronized (lock) {
             outboundStream.onNext(streamMsg);
         }
+        long t3 = System.currentTimeMillis();
+        System.out.println("[PERF] [" + t3 + "] IS EVALUATE_SENT session=" + sessionId +
+                " startTs=" + t0 + " streamOpenedTs=" + t2 + " sentTs=" + t3 +
+                " sendMs=" + (t3 - t2) + " sinceStartMs=" + (t3 - t0));
         log.info("[GrpcStreaming] Sent EvaluateRequest on stream, session: " + sessionId);
 
         try {
             EvaluateResponse response = evalFuture.get(requestTimeout, TimeUnit.SECONDS);
+            long t4 = System.currentTimeMillis();
+            System.out.println("[PERF] [" + t4 + "] IS EVALUATE_RESPONSE session=" + sessionId +
+                    " success=" + response.getSuccess() +
+                    " startTs=" + t0 + " sentTs=" + t3 + " responseTs=" + t4 +
+                    " waitMs=" + (t4 - t3) + " totalMs=" + (t4 - t0));
             log.info("[GrpcStreaming] Received EvaluateResponse, session: " + sessionId +
                     ", success: " + response.getSuccess());
             return response;
         } catch (TimeoutException e) {
+            long tErr = System.currentTimeMillis();
+            System.out.println("[PERF] [" + tErr + "] IS EVALUATE_TIMEOUT session=" +
+                    sessionId + " startTs=" + t0 + " sentTs=" + t3 +
+                    " timeoutTs=" + tErr + " timeoutMs=" + (tErr - t0));
             throw new IOException("Evaluate request timed out after " + requestTimeout + "s", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Evaluate request interrupted", e);
         } catch (ExecutionException e) {
+            long tErr = System.currentTimeMillis();
+            System.out.println("[PERF] [" + tErr + "] IS EVALUATE_ERROR session=" +
+                    sessionId + " error=" + e.getCause().getMessage() +
+                    " startTs=" + t0 + " errorTs=" + tErr + " totalMs=" + (tErr - t0));
             throw new IOException("Evaluate request failed: " + e.getCause().getMessage(), e.getCause());
         } finally {
             streamRegistry.remove(sessionId);
@@ -155,6 +177,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     @Override
     public ExecuteCallbackResponse sendExecuteCallback(ExecuteCallbackRequest request) throws IOException {
         String sessionId = request.getSessionId();
+        long t0 = System.currentTimeMillis();
+        System.out.println("[PERF] [" + t0 + "] IS EXEC_CALLBACK_START session=" + sessionId +
+                " startTs=" + t0 + " fnLen=" + request.getFunctionSource().length());
         log.info("[GrpcStreaming] sendExecuteCallback() - session: " + sessionId +
                 ", function length: " + request.getFunctionSource().length());
 
@@ -163,8 +188,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         CompletableFuture<ExecuteCallbackResponse> callbackFuture = new CompletableFuture<>();
         final Object lock = new Object();
 
+        long t1 = System.currentTimeMillis();
         StreamObserver<StreamMessage> outboundStream = asyncStub.executeScript(
-                createResponseObserver(sessionId, null, callbackFuture, lock));
+                createResponseObserver(sessionId, null, callbackFuture, lock, t0));
+        long t2 = System.currentTimeMillis();
+        System.out.println("[PERF] [" + t2 + "] IS EXEC_CALLBACK_STREAM_OPENED session=" + sessionId +
+                " startTs=" + t0 + " stubReadyTs=" + t1 + " streamOpenedTs=" + t2 +
+                " openMs=" + (t2 - t1) + " sinceStartMs=" + (t2 - t0));
 
         // Send the execute callback request
         StreamMessage streamMsg = StreamMessage.newBuilder()
@@ -178,19 +208,36 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         synchronized (lock) {
             outboundStream.onNext(streamMsg);
         }
+        long t3 = System.currentTimeMillis();
+        System.out.println("[PERF] [" + t3 + "] IS EXEC_CALLBACK_SENT session=" + sessionId +
+                " startTs=" + t0 + " streamOpenedTs=" + t2 + " sentTs=" + t3 +
+                " sendMs=" + (t3 - t2) + " sinceStartMs=" + (t3 - t0));
         log.info("[GrpcStreaming] Sent ExecuteCallbackRequest on stream, session: " + sessionId);
 
         try {
             ExecuteCallbackResponse response = callbackFuture.get(requestTimeout, TimeUnit.SECONDS);
+            long t4 = System.currentTimeMillis();
+            System.out.println("[PERF] [" + t4 + "] IS EXEC_CALLBACK_RESPONSE session=" + sessionId +
+                    " success=" + response.getSuccess() +
+                    " startTs=" + t0 + " sentTs=" + t3 + " responseTs=" + t4 +
+                    " waitMs=" + (t4 - t3) + " totalMs=" + (t4 - t0));
             log.info("[GrpcStreaming] Received ExecuteCallbackResponse, session: " + sessionId +
                     ", success: " + response.getSuccess());
             return response;
         } catch (TimeoutException e) {
+            long tErr = System.currentTimeMillis();
+            System.out.println("[PERF] [" + tErr + "] IS EXEC_CALLBACK_TIMEOUT session=" +
+                    sessionId + " startTs=" + t0 + " sentTs=" + t3 +
+                    " timeoutTs=" + tErr + " timeoutMs=" + (tErr - t0));
             throw new IOException("ExecuteCallback request timed out after " + requestTimeout + "s", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("ExecuteCallback request interrupted", e);
         } catch (ExecutionException e) {
+            long tErr = System.currentTimeMillis();
+            System.out.println("[PERF] [" + tErr + "] IS EXEC_CALLBACK_ERROR session=" +
+                    sessionId + " error=" + e.getCause().getMessage() +
+                    " startTs=" + t0 + " errorTs=" + tErr + " totalMs=" + (tErr - t0));
             throw new IOException("ExecuteCallback failed: " + e.getCause().getMessage(), e.getCause());
         } finally {
             streamRegistry.remove(sessionId);
@@ -276,40 +323,65 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             String sessionId,
             CompletableFuture<EvaluateResponse> evalFuture,
             CompletableFuture<ExecuteCallbackResponse> callbackFuture,
-            Object streamLock) {
+            Object streamLock,
+            long streamStartTime) {
 
         return new StreamObserver<StreamMessage>() {
             @Override
             public void onNext(StreamMessage message) {
+                long now = System.currentTimeMillis();
                 log.info("[GrpcStreaming] Received message type: " + message.getPayloadCase() +
                         ", session: " + message.getSessionId());
 
                 switch (message.getPayloadCase()) {
                     case EVALUATE_RESPONSE:
+                        System.out.println("[PERF] [" + now + "] IS EVALUATE_RESPONSE_ARRIVED session=" +
+                                sessionId + " streamStartTs=" + streamStartTime +
+                                " arrivedTs=" + now +
+                                " sinceStreamStartMs=" + (now - streamStartTime));
                         if (evalFuture != null) {
                             evalFuture.complete(message.getEvaluateResponse());
                         }
                         break;
 
                     case EXECUTE_CALLBACK_RESPONSE:
+                        System.out.println("[PERF] [" + now + "] IS EXEC_CALLBACK_RESPONSE_ARRIVED session=" +
+                                sessionId + " streamStartTs=" + streamStartTime +
+                                " arrivedTs=" + now +
+                                " sinceStreamStartMs=" + (now - streamStartTime));
                         if (callbackFuture != null) {
                             callbackFuture.complete(message.getExecuteCallbackResponse());
                         }
                         break;
 
                     case HOST_FUNCTION_REQUEST:
+                        System.out.println("[PERF] [" + now + "] IS HOST_FN_REQUEST_RECEIVED session=" +
+                                sessionId + " fn=" + message.getHostFunctionRequest().getFunctionName() +
+                                " streamStartTs=" + streamStartTime +
+                                " receivedTs=" + now +
+                                " sinceStreamStartMs=" + (now - streamStartTime));
                         callbackExecutor.submit(() ->
                                 handleHostFunctionRequest(message.getSessionId(),
                                         message.getHostFunctionRequest(), streamLock));
                         break;
 
                     case CONTEXT_PROPERTY_REQUEST:
+                        System.out.println("[PERF] [" + now + "] IS CTX_PROP_REQUEST_RECEIVED session=" +
+                                sessionId + " path=" + message.getContextPropertyRequest().getPropertyPath() +
+                                " streamStartTs=" + streamStartTime +
+                                " receivedTs=" + now +
+                                " sinceStreamStartMs=" + (now - streamStartTime));
                         callbackExecutor.submit(() ->
                                 handleContextPropertyRequest(message.getSessionId(),
                                         message.getContextPropertyRequest(), streamLock));
                         break;
 
                     case CONTEXT_PROPERTY_SET_REQUEST:
+                        System.out.println("[PERF] [" + now + "] IS CTX_PROP_SET_REQUEST_RECEIVED session=" +
+                                sessionId + " path=" + message.getContextPropertySetRequest().getPropertyPath() +
+                                " streamStartTs=" + streamStartTime +
+                                " receivedTs=" + now +
+                                " sinceStreamStartMs=" + (now - streamStartTime));
                         callbackExecutor.submit(() ->
                                 handleContextPropertySetRequest(message.getSessionId(),
                                         message.getContextPropertySetRequest(), streamLock));
@@ -322,6 +394,11 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
             @Override
             public void onError(Throwable t) {
+                long errTs = System.currentTimeMillis();
+                System.out.println("[PERF] [" + errTs + "] IS STREAM_ERROR session=" +
+                        sessionId + " streamStartTs=" + streamStartTime +
+                        " errorTs=" + errTs + " error=" + t.getMessage() +
+                        " sinceStreamStartMs=" + (errTs - streamStartTime));
                 log.error("[GrpcStreaming] Stream error, session: " + sessionId, t);
                 IOException ex = new IOException("Stream error: " + t.getMessage(), t);
                 if (evalFuture != null && !evalFuture.isDone()) {
@@ -334,6 +411,11 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
             @Override
             public void onCompleted() {
+                long completedTs = System.currentTimeMillis();
+                System.out.println("[PERF] [" + completedTs + "] IS STREAM_COMPLETED session=" +
+                        sessionId + " streamStartTs=" + streamStartTime +
+                        " completedTs=" + completedTs +
+                        " sinceStreamStartMs=" + (completedTs - streamStartTime));
                 log.info("[GrpcStreaming] Stream completed, session: " + sessionId);
                 if (evalFuture != null && !evalFuture.isDone()) {
                     evalFuture.completeExceptionally(
@@ -354,6 +436,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     private void handleHostFunctionRequest(String sessionId, HostFunctionRequest request,
                                             Object streamLock) {
         String functionName = request.getFunctionName();
+        long hfStart = System.currentTimeMillis();
+        System.out.println("[PERF] [" + hfStart + "] IS HOST_FN_HANDLE_START session=" + sessionId +
+                " fn=" + functionName + " handleStartTs=" + hfStart);
         log.info("[GrpcStreaming] handleHostFunction: " + functionName + ", session: " + sessionId);
 
         StreamContext ctx = streamRegistry.get(sessionId);
@@ -383,7 +468,16 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             }
 
             // Invoke host function
+            long hfExecStart = System.currentTimeMillis();
             Object result = handler.invokeHostFunction(functionName, args.toArray());
+            long hfExecEnd = System.currentTimeMillis();
+            System.out.println("[PERF] [" + hfExecEnd + "] IS HOST_FN_EXECUTED session=" + sessionId +
+                    " fn=" + functionName +
+                    " handleStartTs=" + hfStart + " deserEndTs=" + hfExecStart +
+                    " execStartTs=" + hfExecStart + " execEndTs=" + hfExecEnd +
+                    " deserMs=" + (hfExecStart - hfStart) +
+                    " execMs=" + (hfExecEnd - hfExecStart) +
+                    " totalMs=" + (hfExecEnd - hfStart));
             log.info("[GrpcStreaming] Host function " + functionName + " returned: " +
                     (result != null ? result.getClass().getSimpleName() : "null"));
 
@@ -405,6 +499,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             }
 
             // Send response back on stream
+            long hfSerEnd = System.currentTimeMillis();
             sendOnStream(ctx, StreamMessage.newBuilder()
                     .setSessionId(sessionId)
                     .setHostFunctionResponse(HostFunctionResponse.newBuilder()
@@ -412,6 +507,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                             .setResult(serializedResult)
                             .build())
                     .build());
+            long hfSentTs = System.currentTimeMillis();
+            System.out.println("[PERF] [" + hfSentTs + "] IS HOST_FN_RESPONSE_SENT session=" +
+                    sessionId + " fn=" + functionName +
+                    " handleStartTs=" + hfStart + " execEndTs=" + hfExecEnd +
+                    " serEndTs=" + hfSerEnd + " sentTs=" + hfSentTs +
+                    " serMs=" + (hfSerEnd - hfExecEnd) + " sendMs=" + (hfSentTs - hfSerEnd) +
+                    " totalHandleMs=" + (hfSentTs - hfStart));
 
         } catch (Exception e) {
             log.error("[GrpcStreaming] Error in host function " + functionName, e);
@@ -431,6 +533,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     private void handleContextPropertyRequest(String sessionId, ContextPropertyRequest request,
                                                Object streamLock) {
         String propertyPath = request.getPropertyPath();
+        long cpStart = System.currentTimeMillis();
+        System.out.println("[PERF] [" + cpStart + "] IS CTX_PROP_HANDLE_START session=" + sessionId +
+                " path=" + propertyPath + " handleStartTs=" + cpStart);
         log.info("[GrpcStreaming] handleContextProperty: " + propertyPath + ", session: " + sessionId);
 
         StreamContext ctx = streamRegistry.get(sessionId);
@@ -452,7 +557,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                 return;
             }
 
+            long cpExecStart = System.currentTimeMillis();
             Object value = handler.getContextProperty(propertyPath);
+            long cpExecEnd = System.currentTimeMillis();
 
             ContextPropertyResponse.Builder responseBuilder = ContextPropertyResponse.newBuilder()
                     .setSuccess(true);
@@ -488,6 +595,14 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                     .setSessionId(sessionId)
                     .setContextPropertyResponse(responseBuilder.build())
                     .build());
+            long cpSentTs = System.currentTimeMillis();
+            System.out.println("[PERF] [" + cpSentTs + "] IS CTX_PROP_RESPONSE_SENT session=" +
+                    sessionId + " path=" + propertyPath +
+                    " handleStartTs=" + cpStart + " execStartTs=" + cpExecStart +
+                    " execEndTs=" + cpExecEnd + " sentTs=" + cpSentTs +
+                    " execMs=" + (cpExecEnd - cpExecStart) +
+                    " serMs=" + (cpSentTs - cpExecEnd) +
+                    " totalMs=" + (cpSentTs - cpStart));
 
         } catch (Exception e) {
             log.error("[GrpcStreaming] Error getting context property: " + propertyPath, e);
@@ -507,6 +622,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     private void handleContextPropertySetRequest(String sessionId, ContextPropertySetRequest request,
                                                   Object streamLock) {
         String propertyPath = request.getPropertyPath();
+        long cpsStart = System.currentTimeMillis();
+        System.out.println("[PERF] [" + cpsStart + "] IS CTX_PROP_SET_HANDLE_START session=" + sessionId +
+                " path=" + propertyPath + " handleStartTs=" + cpsStart);
         log.info("[GrpcStreaming] handleContextPropertySet: " + propertyPath + ", session: " + sessionId);
 
         StreamContext ctx = streamRegistry.get(sessionId);
@@ -528,8 +646,11 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                 return;
             }
 
+            long cpsDeserStart = System.currentTimeMillis();
             Object javaValue = ProtobufSerializer.fromProto(request.getValue());
+            long cpsExecStart = System.currentTimeMillis();
             boolean success = handler.setContextProperty(propertyPath, javaValue);
+            long cpsExecEnd = System.currentTimeMillis();
 
             sendOnStream(ctx, StreamMessage.newBuilder()
                     .setSessionId(sessionId)
@@ -537,6 +658,16 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                             .setSuccess(success)
                             .build())
                     .build());
+            long cpsSentTs = System.currentTimeMillis();
+            System.out.println("[PERF] [" + cpsSentTs + "] IS CTX_PROP_SET_RESPONSE_SENT session=" +
+                    sessionId + " path=" + propertyPath +
+                    " handleStartTs=" + cpsStart + " deserStartTs=" + cpsDeserStart +
+                    " execStartTs=" + cpsExecStart + " execEndTs=" + cpsExecEnd +
+                    " sentTs=" + cpsSentTs +
+                    " deserMs=" + (cpsExecStart - cpsDeserStart) +
+                    " execMs=" + (cpsExecEnd - cpsExecStart) +
+                    " sendMs=" + (cpsSentTs - cpsExecEnd) +
+                    " totalMs=" + (cpsSentTs - cpsStart));
 
         } catch (Exception e) {
             log.error("[GrpcStreaming] Error setting context property: " + propertyPath, e);
