@@ -46,12 +46,15 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Remote JavaScript engine that communicates with a GraalJS sidecar via pluggable transport.
+ * Remote JavaScript engine that communicates with a GraalJS sidecar via
+ * pluggable transport.
  * Each instance represents a session with the sidecar.
  * <p>
- * Host function calls from the sidecar are routed back to IS via the callback server.
+ * Host function calls from the sidecar are routed back to IS via the callback
+ * server.
  * <p>
- * This implementation is decoupled from specific transport mechanisms (UDS, gRPC, etc.)
+ * This implementation is decoupled from specific transport mechanisms (UDS,
+ * gRPC, etc.)
  * through the RemoteEngineTransport and CallbackServer abstractions.
  */
 public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHandler {
@@ -62,16 +65,21 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     private final CallbackServer callbackServer;
     private final String sessionId;
     private final AuthenticationContext authContext;
-    // CRITICAL FIX: Use ConcurrentHashMap to prevent race conditions during concurrent access
-    // from multiple threads (e.g., main execution thread + callback handler threads)
+    // CRITICAL FIX: Use ConcurrentHashMap to prevent race conditions during
+    // concurrent access
+    // from multiple threads (e.g., main execution thread + callback handler
+    // threads)
     private final Map<String, Object> bindings = new ConcurrentHashMap<>();
     private final Map<String, Object> hostFunctions = new ConcurrentHashMap<>();
     private final Map<String, Object> hostFunctionRefs = new ConcurrentHashMap<>();
     private JsGraphBuilder graphBuilder;
     // Accumulated dynamicallyBuiltBaseNode across gRPC callbacks.
-    // In local mode, the dynamicallyBuiltBaseNode ThreadLocal accumulates nodes across
-    // host function calls within a single callback execution (same thread). In remote mode,
-    // each gRPC callback runs on a separate thread, so we persist the value here between
+    // In local mode, the dynamicallyBuiltBaseNode ThreadLocal accumulates nodes
+    // across
+    // host function calls within a single callback execution (same thread). In
+    // remote mode,
+    // each gRPC callback runs on a separate thread, so we persist the value here
+    // between
     // setupThreadContext/clearThreadContext pairs to replicate local mode behavior.
     private volatile AuthGraphNode accumulatedDynamicBaseNode;
     private boolean closed = false;
@@ -80,12 +88,14 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     /**
      * Create a new remote JavaScript engine.
      *
-     * @param transport      The transport layer for communicating with the remote engine.
-     * @param callbackServer The callback server for receiving host function invocations.
+     * @param transport      The transport layer for communicating with the remote
+     *                       engine.
+     * @param callbackServer The callback server for receiving host function
+     *                       invocations.
      * @param authContext    The authentication context for this session.
      */
     public RemoteJsEngine(RemoteEngineTransport transport, CallbackServer callbackServer,
-                          AuthenticationContext authContext) {
+            AuthenticationContext authContext) {
         this.transport = transport;
         this.callbackServer = callbackServer;
         this.authContext = authContext;
@@ -98,10 +108,12 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
     /**
      * Set the graph builder reference for this engine.
-     * This is needed so that gRPC callback threads can set the currentBuilder ThreadLocal,
+     * This is needed so that gRPC callback threads can set the currentBuilder
+     * ThreadLocal,
      * which is required by static methods like JsGraphBuilder.addLongWaitProcess().
      *
-     * @param graphBuilder The JsGraphBuilder instance to use for callback thread context.
+     * @param graphBuilder The JsGraphBuilder instance to use for callback thread
+     *                     context.
      */
     public void setGraphBuilder(JsGraphBuilder graphBuilder) {
         this.graphBuilder = graphBuilder;
@@ -134,12 +146,15 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         log.info("[RemoteJsEngine] evaluate() called, session: " + sessionId + ", sourceId: " + sourceIdentifier);
 
         try {
+            // Phase 1: Connect and setup
             log.info("[RemoteJsEngine] Ensuring connection to remote engine");
             ensureConnected();
             log.info("[RemoteJsEngine] Connection established, registering handler...");
             ensureHandlerRegistered();
             log.info("[RemoteJsEngine] Handler registered: " + handlerRegistered);
+            long tConnectDone = System.currentTimeMillis();
 
+            // Phase 2: Build request (protobuf serialization)
             // Apply initial bindings
             if (initialBindings != null) {
                 bindings.putAll(initialBindings);
@@ -158,13 +173,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 requestBuilder.setCallbackSocketPath(callbackAddress);
             }
 
-            // Serialize bindings for initial script evaluation
-            // Host functions are registered separately via HostFunctionDefinition
-            // ProtobufSerializer.toProto() converts Java objects to protobuf SerializedValue
+            // Serialize bindings
             log.info("[RemoteJsEngine] Serializing " + bindings.size() + " bindings, " +
                     hostFunctions.size() + " host functions");
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
-                // Skip host function objects - they're registered via addHostFunctions() instead
                 if (!hostFunctions.containsKey(entry.getKey())) {
                     requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(entry.getValue()));
                 }
@@ -201,12 +213,16 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             } else {
                 log.warn("[RemoteJsEngine] No authContext available, context proxy will be empty");
             }
+            long tRequestBuilt = System.currentTimeMillis();
 
-            // Send request and get response (blocking)
+            // Phase 3: Transport round-trip
             log.info("[RemoteJsEngine] Sending evaluate request to remote engine...");
             EvaluateResponse response = transport.sendEvaluate(requestBuilder.build());
+            long tResponseReceived = System.currentTimeMillis();
             log.info("[RemoteJsEngine] Received response, success: " + response.getSuccess());
 
+            // Phase 4: Response processing
+            EvaluationResult evalResult;
             if (response.getSuccess()) {
                 // Update bindings from response
                 Map<String, Object> updatedBindings = new HashMap<>();
@@ -217,25 +233,42 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 }
 
                 Object result = ProtobufSerializer.fromProto(response.getResult());
+                long tResponseProcessed = System.currentTimeMillis();
 
-                return EvaluationResult.builder()
+                long isElapsed = tResponseProcessed - startTime;
+                log.info("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
+                        "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
+                        "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
+                        "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
+                        "ms, total=" + isElapsed + "ms" +
+                        ", sidecarReported=" + response.getElapsedMs() + "ms");
+
+                evalResult = EvaluationResult.builder()
                         .success(true)
                         .result(result)
                         .updatedBindings(updatedBindings)
-                        .elapsedMs(response.getElapsedMs())
+                        .elapsedMs(isElapsed)
                         .build();
             } else {
-                return EvaluationResult.failure(
+                long tResponseProcessed = System.currentTimeMillis();
+                long isElapsed = tResponseProcessed - startTime;
+                log.info("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
+                        "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
+                        "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
+                        "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
+                        "ms, total=" + isElapsed + "ms");
+                evalResult = EvaluationResult.failure(
                         response.getErrorMessage(),
                         response.getErrorType(),
-                        response.getElapsedMs());
+                        isElapsed);
             }
+            return evalResult;
 
         } catch (IOException e) {
-            long elapsed = System.currentTimeMillis() - startTime;
+            long isElapsed = System.currentTimeMillis() - startTime;
             log.error("IOException during remote evaluation", e);
             return EvaluationResult.failure("Remote engine communication failed: " + e.getMessage(),
-                    "IOException", elapsed);
+                    "IOException", isElapsed);
         }
     }
 
@@ -248,18 +281,16 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 ", args: " + (arguments != null ? arguments.length : 0));
 
         try {
+            // Phase 1: Connect and setup
             log.info("[RemoteJsEngine] executeCallback - ensuring connection to remote engine");
             ensureConnected();
             log.info("[RemoteJsEngine] executeCallback - connection OK, registering handler...");
             ensureHandlerRegistered();
             log.info("[RemoteJsEngine] executeCallback - handler registered: " + handlerRegistered);
+            long tConnectDone = System.currentTimeMillis();
 
+            // Phase 2: Build request (protobuf serialization)
             // Apply callback bindings
-            // CRITICAL: callbackBindings come from AuthenticationContext and are already serialized
-            // by GraalSerializer (through JsGraalGraphBuilderFactory.persistCurrentContext or LocalJsEngine).
-            // They contain: HashMap, ArrayList, primitives, GraalSerializableJsFunction objects.
-            // We store them as-is here, and later ProtobufSerializer.toProto() will handle them correctly
-            // (it calls GraalSerializer.toJsSerializableInternal which is idempotent for already-serialized objects).
             if (callbackBindings != null && !callbackBindings.isEmpty()) {
                 log.info("[RemoteJsEngine] Applying " + callbackBindings.size() + " callback bindings: " +
                         callbackBindings.keySet());
@@ -267,8 +298,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     Object value = entry.getValue();
                     log.info("[RemoteJsEngine] Callback binding: " + entry.getKey() + " = " +
                             (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
-
-                    // Store binding - ConcurrentHashMap ensures thread-safe access
                     bindings.put(entry.getKey(), value);
                 }
             } else {
@@ -319,12 +348,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             }
 
             // Serialize bindings (excluding host functions)
-            // SERIALIZATION FLOW:
-            // 1. bindings map contains objects already serialized by GraalSerializer (HashMap, ArrayList, etc.)
-            // 2. ProtobufSerializer.toProto() will:
-            //    a. Call GraalSerializer.toJsSerializableInternal() first (idempotent for already-serialized)
-            //    b. Convert to protobuf SerializedValue for transport to sidecar
-            // 3. Special handling: GraalSerializableJsFunction objects are serialized to SerializedFunction
             log.info("[RemoteJsEngine] Total bindings to serialize: " + bindings.size() +
                     ", keys: " + bindings.keySet());
             log.info("[RemoteJsEngine] Host functions (excluded from bindings): " + hostFunctions.keySet());
@@ -334,7 +357,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     Object value = entry.getValue();
                     log.info("[RemoteJsEngine] Serializing binding: " + entry.getKey() + " = " +
                             (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
-                    // ProtobufSerializer handles: primitives, String, Map, List, GraalSerializableJsFunction
                     requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(value));
                     bindingsAdded++;
                 }
@@ -350,13 +372,15 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                                 .setName(funcName)
                                 .build());
             }
+            long tRequestBuilt = System.currentTimeMillis();
 
-            // Send request and get response (blocking)
+            // Phase 3: Transport round-trip
             log.info("[RemoteJsEngine] Sending executeCallback request to remote engine...");
             ExecuteCallbackResponse response = transport.sendExecuteCallback(requestBuilder.build());
-            log.info("[RemoteJsEngine] executeCallback response - success: " + response.getSuccess() +
-                    ", elapsed: " + response.getElapsedMs() + "ms");
+            long tResponseReceived = System.currentTimeMillis();
 
+            // Phase 4: Response processing
+            EvaluationResult evalResult;
             if (response.getSuccess()) {
                 // Update bindings from response
                 Map<String, Object> updatedBindings = new HashMap<>();
@@ -367,25 +391,42 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 }
 
                 Object result = ProtobufSerializer.fromProto(response.getResult());
+                long tResponseProcessed = System.currentTimeMillis();
 
-                return EvaluationResult.builder()
+                long isElapsed = tResponseProcessed - startTime;
+                log.info("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
+                        "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
+                        "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
+                        "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
+                        "ms, total=" + isElapsed + "ms" +
+                        ", sidecarReported=" + response.getElapsedMs() + "ms");
+
+                evalResult = EvaluationResult.builder()
                         .success(true)
                         .result(result)
                         .updatedBindings(updatedBindings)
-                        .elapsedMs(response.getElapsedMs())
+                        .elapsedMs(isElapsed)
                         .build();
             } else {
-                return EvaluationResult.failure(
+                long tResponseProcessed = System.currentTimeMillis();
+                long isElapsed = tResponseProcessed - startTime;
+                log.info("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
+                        "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
+                        "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
+                        "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
+                        "ms, total=" + isElapsed + "ms");
+                evalResult = EvaluationResult.failure(
                         response.getErrorMessage(),
                         "ExecutionError",
-                        response.getElapsedMs());
+                        isElapsed);
             }
+            return evalResult;
 
         } catch (IOException e) {
-            long elapsed = System.currentTimeMillis() - startTime;
+            long isElapsed = System.currentTimeMillis() - startTime;
             log.error("IOException during remote callback execution", e);
             return EvaluationResult.failure("Remote callback execution failed: " + e.getMessage(),
-                    "IOException", elapsed);
+                    "IOException", isElapsed);
         }
     }
 
@@ -580,7 +621,8 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             }
 
             // Handle special case for array-like access (e.g., "steps::1")
-            // JsGraalSteps implements ProxyArray, so we need to use get(long) for numeric indices
+            // JsGraalSteps implements ProxyArray, so we need to use get(long) for numeric
+            // indices
             if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
                 // Numeric index access on ProxyArray (e.g., JsGraalSteps)
                 int index = Integer.parseInt(part);
@@ -664,8 +706,8 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
                     java.lang.reflect.Method getter = current.getClass().getMethod(getterName);
                     current = getter.invoke(current);
-                } catch (NoSuchMethodException | IllegalAccessException |
-                         java.lang.reflect.InvocationTargetException e) {
+                } catch (NoSuchMethodException | IllegalAccessException
+                        | java.lang.reflect.InvocationTargetException e) {
                     log.debug("[RemoteJsEngine] No getter for host ref property: " + part);
                     return null;
                 }
@@ -680,7 +722,8 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     /**
      * Set a context property value (write-back from sidecar).
      * This navigates the property path and sets the value on the target object.
-     * Supports paths like: "steps::1::subject::claims::http://wso2.org/claims/email"
+     * Supports paths like:
+     * "steps::1::subject::claims::http://wso2.org/claims/email"
      * Also supports host function return references via "__hostref__" prefix.
      */
     @Override
@@ -910,8 +953,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     ", contextId: " + authContext.getContextIdentifier());
             try {
                 // Set Carbon context for the current thread.
-                org.wso2.carbon.context.PrivilegedCarbonContext carbonContext =
-                        org.wso2.carbon.context.PrivilegedCarbonContext
+                org.wso2.carbon.context.PrivilegedCarbonContext carbonContext = org.wso2.carbon.context.PrivilegedCarbonContext
                         .getThreadLocalCarbonContext();
                 carbonContext.setTenantDomain(authContext.getTenantDomain());
                 carbonContext.setTenantId(
@@ -934,9 +976,11 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
                 // Set dynamicallyBuiltBaseNode from accumulated value across gRPC callbacks.
                 // In local mode, this ThreadLocal starts null during callback execution and
-                // accumulates nodes via executeStepInAsyncEvent across calls on the same thread.
+                // accumulates nodes via executeStepInAsyncEvent across calls on the same
+                // thread.
                 // In remote mode, each gRPC callback runs on a separate thread, so we persist
-                // the value in accumulatedDynamicBaseNode between setup/clear pairs to replicate
+                // the value in accumulatedDynamicBaseNode between setup/clear pairs to
+                // replicate
                 // the local mode single-thread accumulation behavior.
                 if (accumulatedDynamicBaseNode != null) {
                     JsGraalGraphBuilder.setDynamicallyBuiltBaseNodeThreadLocal(accumulatedDynamicBaseNode);
@@ -1040,10 +1084,14 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     /**
      * Handle varargs method argument adaptation.
      * Filters out null values from the varargs portion, since in remote mode
-     * JavaScript undefined/null placeholder arguments get serialized as explicit nulls
-     * through the gRPC chain. In local GraalJS mode, these would either be omitted or
-     * handled differently by the type conversion system. Methods like httpGet(String, Object...)
-     * validate varargs with instanceof checks (e.g., params[0] instanceof Map), so null
+     * JavaScript undefined/null placeholder arguments get serialized as explicit
+     * nulls
+     * through the gRPC chain. In local GraalJS mode, these would either be omitted
+     * or
+     * handled differently by the type conversion system. Methods like
+     * httpGet(String, Object...)
+     * validate varargs with instanceof checks (e.g., params[0] instanceof Map), so
+     * null
      * entries cause IllegalArgumentException.
      */
     private Object[] adaptVarArgsMethod(java.lang.reflect.Method method, Class<?>[] paramTypes, Object[] args) {
@@ -1107,8 +1155,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         // IMPORTANT: Check for context proxy marker from sidecar.
-        // When the sidecar sends a DynamicContextProxy as an argument, it serializes it as a Map
-        // with special marker fields. We need to reconstruct the actual object from stored authContext.
+        // When the sidecar sends a DynamicContextProxy as an argument, it serializes it
+        // as a Map
+        // with special marker fields. We need to reconstruct the actual object from
+        // stored authContext.
         if (arg instanceof Map) {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) arg;
@@ -1200,8 +1250,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         // Handle Map to Object conversion (for varargs with map/object arguments).
-        // Coerce whole-number Doubles to Integers inside Maps, since protobuf deserializes
-        // all numbers as Double but host function implementations expect Integer for values
+        // Coerce whole-number Doubles to Integers inside Maps, since protobuf
+        // deserializes
+        // all numbers as Double but host function implementations expect Integer for
+        // values
         // like max-age, port numbers, etc. (matching in-process GraalJS behavior).
         if (paramType == Object.class) {
             if (arg instanceof Map) {
@@ -1248,10 +1300,13 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
     /**
      * Reconstruct a context object from a proxy marker sent by the sidecar.
-     * This handles nested properties like context.currentKnownSubject, context.steps[1], etc.
+     * This handles nested properties like context.currentKnownSubject,
+     * context.steps[1], etc.
      *
-     * @param proxyType The type of proxy (e.g., "context", "authenticateduser", "step")
-     * @param basePath  The path to the property (e.g., "", "currentKnownSubject", "steps::1")
+     * @param proxyType The type of proxy (e.g., "context", "authenticateduser",
+     *                  "step")
+     * @param basePath  The path to the property (e.g., "", "currentKnownSubject",
+     *                  "steps::1")
      * @param paramType The expected parameter type from the method signature
      * @return The reconstructed object, or null if reconstruction fails
      */
@@ -1264,8 +1319,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         // Direct reconstruction for "authenticateduser" with path "steps::N::subject".
-        // This bypasses proxy navigation which can fail due to JsStep.getSubject() returning null
-        // when the IdP data lookup doesn't match, causing createJsAuthenticatedUser to throw.
+        // This bypasses proxy navigation which can fail due to JsStep.getSubject()
+        // returning null
+        // when the IdP data lookup doesn't match, causing createJsAuthenticatedUser to
+        // throw.
         if ("authenticateduser".equals(proxyType) && basePath.matches("steps::\\d+::subject")) {
             String[] parts = basePath.split("::");
             int stepNum = Integer.parseInt(parts[1]);
@@ -1282,7 +1339,8 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 }
 
                 if (authenticatedIdp != null) {
-                    // Look up the user from authenticated IdP data (same logic as JsStep.getSubject())
+                    // Look up the user from authenticated IdP data (same logic as
+                    // JsStep.getSubject())
                     AuthenticatedIdPData idPData = authContext.getCurrentAuthenticatedIdPs().get(authenticatedIdp);
                     if (idPData == null) {
                         idPData = authContext.getPreviousAuthenticatedIdPs().get(authenticatedIdp);
