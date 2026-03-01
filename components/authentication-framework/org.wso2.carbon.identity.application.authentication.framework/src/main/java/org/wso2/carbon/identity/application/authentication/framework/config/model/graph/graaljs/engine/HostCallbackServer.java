@@ -153,16 +153,24 @@ public class HostCallbackServer implements Closeable {
         acceptThread.setDaemon(true);
         acceptThread.start();
 
-        log.info("Host callback server started at: " + socketPath);
+        if (log.isDebugEnabled()) {
+            log.debug("Host callback server started at: " + socketPath);
+        }
     }
 
     private void acceptConnections() {
-        log.info("[HostCallbackServer] Starting accept loop...");
+        if (log.isDebugEnabled()) {
+            log.debug("[HostCallbackServer] Starting accept loop...");
+        }
         while (running.get()) {
             try {
-                log.info("[HostCallbackServer] Waiting for callback connection...");
+                if (log.isDebugEnabled()) {
+                    log.debug("[HostCallbackServer] Waiting for callback connection...");
+                }
                 AFUNIXSocket clientSocket = serverSocket.accept();
-                log.info("[HostCallbackServer] Accepted callback connection from sidecar");
+                if (log.isDebugEnabled()) {
+                    log.debug("[HostCallbackServer] Accepted callback connection from sidecar");
+                }
                 executor.submit(() -> handleClient(clientSocket));
             } catch (IOException e) {
                 if (running.get()) {
@@ -173,7 +181,9 @@ public class HostCallbackServer implements Closeable {
     }
 
     private void handleClient(AFUNIXSocket socket) {
-        log.info("[HostCallbackServer] handleClient - processing callback connection");
+        if (log.isDebugEnabled()) {
+            log.debug("[HostCallbackServer] handleClient - processing callback connection");
+        }
         try (DataInputStream input = new DataInputStream(socket.getInputStream());
                 DataOutputStream output = new DataOutputStream(socket.getOutputStream())) {
 
@@ -195,7 +205,9 @@ public class HostCallbackServer implements Closeable {
 
                         log.debug("[HostCallbackServer] HostFunctionRequest: " + request);
 
-                        log.info("[HostCallbackServer] Processing host function: " + request.getFunctionName());
+                        if (log.isDebugEnabled()) {
+                            log.debug("[HostCallbackServer] Processing host function: " + request.getFunctionName());
+                        }
                         HostFunctionResponse response = processHostFunctionRequest(request);
 
                         log.debug("[HostCallbackServer] HostFunctionResponse: " + response);
@@ -229,8 +241,10 @@ public class HostCallbackServer implements Closeable {
 
                         log.debug("[HostCallbackServer] ContextPropertySetRequest: " + request);
 
-                        log.info("[HostCallbackServer] Processing context property SET: " +
-                                request.getPropertyPath());
+                        if (log.isDebugEnabled()) {
+                            log.debug("[HostCallbackServer] Processing context property SET: " +
+                                    request.getPropertyPath());
+                        }
                         ContextPropertySetResponse response = processContextPropertySetRequest(request);
 
                         log.debug("[HostCallbackServer] ContextPropertySetResponse: " + response);
@@ -247,7 +261,9 @@ public class HostCallbackServer implements Closeable {
                     }
 
                 } catch (java.io.EOFException e) {
-                    log.info("[HostCallbackServer] Client connection closed (EOF)");
+                    if (log.isDebugEnabled()) {
+                        log.debug("[HostCallbackServer] Client connection closed (EOF)");
+                    }
                     break;
                 }
             }
@@ -265,15 +281,19 @@ public class HostCallbackServer implements Closeable {
     private HostFunctionResponse processHostFunctionRequest(HostFunctionRequest request) {
         String sessionId = request.getSessionId();
         String functionName = request.getFunctionName();
-        log.info("[HostCallbackServer] Processing host function request: " + functionName +
-                ", session: " + sessionId + ", args count: " + request.getArgumentsCount());
+        if (log.isDebugEnabled()) {
+            log.debug("[HostCallbackServer] Processing host function request: " + functionName +
+                    ", session: " + sessionId + ", args count: " + request.getArgumentsCount());
+        }
 
         List<Object> args = new ArrayList<>();
 
         for (SerializedValue sv : request.getArgumentsList()) {
             Object deserializedArg = ProtobufSerializer.fromProto(sv);
-            log.info("[HostCallbackServer] Deserialized arg type: " +
-                    (deserializedArg != null ? deserializedArg.getClass().getName() : "null"));
+            if (log.isDebugEnabled()) {
+                log.debug("[HostCallbackServer] Deserialized arg type: " +
+                        (deserializedArg != null ? deserializedArg.getClass().getName() : "null"));
+            }
             args.add(deserializedArg);
         }
 
@@ -286,14 +306,20 @@ public class HostCallbackServer implements Closeable {
                     .setErrorMessage("No handler for session: " + sessionId)
                     .build();
         }
-        log.info("[HostCallbackServer] Found handler: " + handler.getClass().getName());
+        if (log.isDebugEnabled()) {
+            log.debug("[HostCallbackServer] Found handler: " + handler.getClass().getName());
+        }
 
         try {
-            log.info("[HostCallbackServer] Invoking host function: " + functionName + " with " + args.size()
-                    + " args");
+            if (log.isDebugEnabled()) {
+                log.debug("[HostCallbackServer] Invoking host function: " + functionName + " with " + args.size()
+                        + " args");
+            }
             Object result = handler.invokeHostFunction(functionName, args.toArray());
-            log.info("[HostCallbackServer] Host function returned: " +
-                    (result != null ? result.getClass().getName() : "null"));
+            if (log.isDebugEnabled()) {
+                log.debug("[HostCallbackServer] Host function returned: " +
+                        (result != null ? result.getClass().getName() : "null"));
+            }
 
             SerializedValue serializedResult;
             if (result != null && isProxyType(result)) {
@@ -324,8 +350,10 @@ public class HostCallbackServer implements Closeable {
     private ContextPropertyResponse processContextPropertyRequest(ContextPropertyRequest request) {
         String sessionId = request.getSessionId();
         String propertyPath = request.getPropertyPath();
-        log.info("[HostCallbackServer] Processing context property request: " + propertyPath + ", session: "
-                + sessionId + ", proxyType: " + request.getProxyType());
+        if (log.isDebugEnabled()) {
+            log.debug("[HostCallbackServer] Processing context property request: " + propertyPath + ", session: "
+                    + sessionId + ", proxyType: " + request.getProxyType());
+        }
 
         CallbackServer.HostFunctionHandler handler = sessionHandlers.get(sessionId);
         if (handler == null) {
@@ -340,8 +368,10 @@ public class HostCallbackServer implements Closeable {
             // Delegate to handler to get the property value
             Object value = handler.getContextProperty(propertyPath);
 
-            log.info("[HostCallbackServer] Retrieved property '" + propertyPath + "' - type: " +
-                    (value != null ? value.getClass().getSimpleName() : "null"));
+            if (log.isDebugEnabled()) {
+                log.debug("[HostCallbackServer] Retrieved property '" + propertyPath + "' - type: " +
+                        (value != null ? value.getClass().getSimpleName() : "null"));
+            }
 
             if (value == null) {
                 return ContextPropertyResponse.newBuilder()
@@ -379,8 +409,10 @@ public class HostCallbackServer implements Closeable {
                 extractMemberKeys(keys, responseBuilder);
             }
 
-            log.info("[HostCallbackServer] Returning context property response - success: true, isProxy: " +
-                    isProxy + ", proxyType: " + proxyType);
+            if (log.isDebugEnabled()) {
+                log.debug("[HostCallbackServer] Returning context property response - success: true, isProxy: " +
+                        isProxy + ", proxyType: " + proxyType);
+            }
 
             return responseBuilder.build();
 
@@ -402,8 +434,10 @@ public class HostCallbackServer implements Closeable {
         String propertyPath = request.getPropertyPath();
         SerializedValue value = request.getValue();
 
-        log.info("[HostCallbackServer] Processing context property SET: " + propertyPath + ", session: "
-                + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[HostCallbackServer] Processing context property SET: " + propertyPath + ", session: "
+                    + sessionId);
+        }
 
         CallbackServer.HostFunctionHandler handler = sessionHandlers.get(sessionId);
         if (handler == null) {
@@ -422,7 +456,9 @@ public class HostCallbackServer implements Closeable {
             boolean success = handler.setContextProperty(propertyPath, javaValue);
 
             if (success) {
-                log.info("[HostCallbackServer] Successfully set property: " + propertyPath);
+                if (log.isDebugEnabled()) {
+                    log.debug("[HostCallbackServer] Successfully set property: " + propertyPath);
+                }
                 return ContextPropertySetResponse.newBuilder()
                         .setSuccess(true)
                         .build();
@@ -452,8 +488,10 @@ public class HostCallbackServer implements Closeable {
         String refId = handler.storeObjectReference(result);
         String proxyType = getProxyType(result);
 
-        log.info("[HostCallbackServer] Serializing complex result as proxy: type=" + proxyType +
-                ", refId=" + refId);
+        if (log.isDebugEnabled()) {
+            log.debug("[HostCallbackServer] Serializing complex result as proxy: type=" + proxyType +
+                    ", refId=" + refId);
+        }
 
         SerializedProxyObject.Builder proxyBuilder = SerializedProxyObject.newBuilder()
                 .setType(proxyType)
@@ -551,7 +589,9 @@ public class HostCallbackServer implements Closeable {
         // Clean up socket file
         new File(socketPath).delete();
 
-        log.info("Host callback server stopped");
+        if (log.isDebugEnabled()) {
+            log.debug("Host callback server stopped");
+        }
     }
 
     /**

@@ -100,10 +100,12 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         this.callbackServer = callbackServer;
         this.authContext = authContext;
         this.sessionId = UUID.randomUUID().toString();
-        log.info("[RemoteJsEngine] Created with session: " + sessionId +
-                ", transport: " + transport.getClass().getSimpleName() +
-                ", callbackServer: " + callbackServer.getClass().getSimpleName() +
-                ", SP: " + (authContext != null ? authContext.getServiceProviderName() : "null"));
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] Created with session: " + sessionId +
+                    ", transport: " + transport.getClass().getSimpleName() +
+                    ", callbackServer: " + callbackServer.getClass().getSimpleName() +
+                    ", SP: " + (authContext != null ? authContext.getServiceProviderName() : "null"));
+        }
     }
 
     /**
@@ -143,15 +145,23 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     @Override
     public EvaluationResult evaluate(String script, String sourceIdentifier, Map<String, Object> initialBindings) {
         long startTime = System.currentTimeMillis();
-        log.info("[RemoteJsEngine] evaluate() called, session: " + sessionId + ", sourceId: " + sourceIdentifier);
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] evaluate() called, session: " + sessionId + ", sourceId: " + sourceIdentifier);
+        }
 
         try {
             // Phase 1: Connect and setup
-            log.info("[RemoteJsEngine] Ensuring connection to remote engine");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Ensuring connection to remote engine");
+            }
             ensureConnected();
-            log.info("[RemoteJsEngine] Connection established, registering handler...");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Connection established, registering handler...");
+            }
             ensureHandlerRegistered();
-            log.info("[RemoteJsEngine] Handler registered: " + handlerRegistered);
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Handler registered: " + handlerRegistered);
+            }
             long tConnectDone = System.currentTimeMillis();
 
             // Phase 2: Build request (protobuf serialization)
@@ -168,23 +178,34 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
             // Set callback address for host function callbacks
             String callbackAddress = callbackServer.getCallbackAddress();
-            log.info("[RemoteJsEngine] Callback address: " + callbackAddress);
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Callback address: " + callbackAddress);
+            }
             if (callbackAddress != null) {
                 requestBuilder.setCallbackSocketPath(callbackAddress);
             }
 
             // Serialize bindings
-            log.info("[RemoteJsEngine] Serializing " + bindings.size() + " bindings, " +
-                    hostFunctions.size() + " host functions");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Serializing " + bindings.size() + " bindings, " +
+                        hostFunctions.size() + " host functions");
+            }
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
-                if (!hostFunctions.containsKey(entry.getKey())) {
+                // Skip "context" -- JsGraalAuthenticationContext is not ProtobufSerializer-compatible.
+                // Context state is sent as structured ContextData and the sidecar accesses it
+                // via DynamicContextProxy callbacks. Serializing it here causes a toString()
+                // fallback with WARN log. If this binding is ever needed, implement a proper
+                // toProto() conversion for JsGraalAuthenticationContext first.
+                if (!"context".equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
                     requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(entry.getValue()));
                 }
             }
 
             // Add host function definitions so sidecar knows to call back
             for (String funcName : hostFunctions.keySet()) {
-                log.info("[RemoteJsEngine] Registering host function: " + funcName);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Registering host function: " + funcName);
+                }
                 requestBuilder.addHostFunctions(
                         HostFunctionDefinition.newBuilder()
                                 .setName(funcName)
@@ -193,9 +214,11 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
             // Add context data for context proxy reconstruction in sidecar
             if (authContext != null) {
-                log.info("[RemoteJsEngine] Adding context data, step: " + authContext.getCurrentStep() +
-                        ", subject: "
-                        + (authContext.getSubject() != null ? authContext.getSubject().getUserName() : "null"));
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Adding context data, step: " + authContext.getCurrentStep() +
+                            ", subject: "
+                            + (authContext.getSubject() != null ? authContext.getSubject().getUserName() : "null"));
+                }
                 ContextData.Builder contextDataBuilder = ContextData.newBuilder()
                         .setSessionContextKey(
                                 authContext.getContextIdentifier() != null ? authContext.getContextIdentifier() : "")
@@ -216,10 +239,14 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             long tRequestBuilt = System.currentTimeMillis();
 
             // Phase 3: Transport round-trip
-            log.info("[RemoteJsEngine] Sending evaluate request to remote engine...");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Sending evaluate request to remote engine...");
+            }
             EvaluateResponse response = transport.sendEvaluate(requestBuilder.build());
             long tResponseReceived = System.currentTimeMillis();
-            log.info("[RemoteJsEngine] Received response, success: " + response.getSuccess());
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Received response, success: " + response.getSuccess());
+            }
 
             // Phase 4: Response processing
             EvaluationResult evalResult;
@@ -236,12 +263,14 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 long tResponseProcessed = System.currentTimeMillis();
 
                 long isElapsed = tResponseProcessed - startTime;
-                log.info("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
-                        "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
-                        "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
-                        "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
-                        "ms, total=" + isElapsed + "ms" +
-                        ", sidecarReported=" + response.getElapsedMs() + "ms");
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
+                            "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
+                            "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
+                            "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
+                            "ms, total=" + isElapsed + "ms" +
+                            ", sidecarReported=" + response.getElapsedMs() + "ms");
+                }
 
                 evalResult = EvaluationResult.builder()
                         .success(true)
@@ -252,11 +281,13 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             } else {
                 long tResponseProcessed = System.currentTimeMillis();
                 long isElapsed = tResponseProcessed - startTime;
-                log.info("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
-                        "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
-                        "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
-                        "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
-                        "ms, total=" + isElapsed + "ms");
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
+                            "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
+                            "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
+                            "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
+                            "ms, total=" + isElapsed + "ms");
+                }
                 evalResult = EvaluationResult.failure(
                         response.getErrorMessage(),
                         response.getErrorType(),
@@ -276,33 +307,47 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     public EvaluationResult executeCallback(String functionSource, Object[] arguments,
             Map<String, Object> callbackBindings, AuthenticationContext context) {
         long startTime = System.currentTimeMillis();
-        log.info("[RemoteJsEngine] executeCallback() called, session: " + sessionId +
-                ", function length: " + (functionSource != null ? functionSource.length() : 0) +
-                ", args: " + (arguments != null ? arguments.length : 0));
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] executeCallback() called, session: " + sessionId +
+                    ", function length: " + (functionSource != null ? functionSource.length() : 0) +
+                    ", args: " + (arguments != null ? arguments.length : 0));
+        }
 
         try {
             // Phase 1: Connect and setup
-            log.info("[RemoteJsEngine] executeCallback - ensuring connection to remote engine");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] executeCallback - ensuring connection to remote engine");
+            }
             ensureConnected();
-            log.info("[RemoteJsEngine] executeCallback - connection OK, registering handler...");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] executeCallback - connection OK, registering handler...");
+            }
             ensureHandlerRegistered();
-            log.info("[RemoteJsEngine] executeCallback - handler registered: " + handlerRegistered);
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] executeCallback - handler registered: " + handlerRegistered);
+            }
             long tConnectDone = System.currentTimeMillis();
 
             // Phase 2: Build request (protobuf serialization)
             // Apply callback bindings
             if (callbackBindings != null && !callbackBindings.isEmpty()) {
-                log.info("[RemoteJsEngine] Applying " + callbackBindings.size() + " callback bindings: " +
-                        callbackBindings.keySet());
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Applying " + callbackBindings.size() + " callback bindings: " +
+                            callbackBindings.keySet());
+                }
                 for (Map.Entry<String, Object> entry : callbackBindings.entrySet()) {
                     Object value = entry.getValue();
-                    log.info("[RemoteJsEngine] Callback binding: " + entry.getKey() + " = " +
-                            (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Callback binding: " + entry.getKey() + " = " +
+                                (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
+                    }
                     bindings.put(entry.getKey(), value);
                 }
             } else {
-                log.info("[RemoteJsEngine] No callback bindings provided (null or empty). " +
-                        "callbackBindings=" + callbackBindings);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] No callback bindings provided (null or empty). " +
+                            "callbackBindings=" + callbackBindings);
+                }
             }
 
             // Build the request
@@ -312,15 +357,19 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
             // Set callback address
             String callbackAddress = callbackServer.getCallbackAddress();
-            log.info("[RemoteJsEngine] executeCallback - callback address: " + callbackAddress);
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] executeCallback - callback address: " + callbackAddress);
+            }
             if (callbackAddress != null) {
                 requestBuilder.setCallbackSocketPath(callbackAddress);
             }
 
             // Add context data for proxy object reconstruction
             if (context != null) {
-                log.info("[RemoteJsEngine] Adding context data, step: " + context.getCurrentStep() +
-                        ", subject: " + (context.getSubject() != null ? context.getSubject().getUserName() : "null"));
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Adding context data, step: " + context.getCurrentStep() +
+                            ", subject: " + (context.getSubject() != null ? context.getSubject().getUserName() : "null"));
+                }
                 ContextData.Builder contextDataBuilder = ContextData.newBuilder()
                         .setSessionContextKey(
                                 context.getContextIdentifier() != null ? context.getContextIdentifier() : "")
@@ -339,34 +388,67 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
             // Serialize arguments
             if (arguments != null) {
-                log.info("[RemoteJsEngine] Serializing " + arguments.length + " arguments");
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Serializing " + arguments.length + " arguments");
+                }
                 for (int i = 0; i < arguments.length; i++) {
-                    log.info("[RemoteJsEngine] Arg[" + i + "] type: " +
-                            (arguments[i] != null ? arguments[i].getClass().getName() : "null"));
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Arg[" + i + "] type: " +
+                                (arguments[i] != null ? arguments[i].getClass().getName() : "null"));
+                    }
+                    // Replace JsGraalAuthenticationContext with a marker string instead of
+                    // serializing the full object (which is not ProtobufSerializer-compatible
+                    // and causes a toString() fallback with WARN log). The sidecar detects
+                    // this marker via sv.getStringValue().contains("JsGraalAuthenticationContext")
+                    // and substitutes its local DynamicContextProxy. We must preserve the
+                    // argument position — skipping it would shift subsequent args (e.g.,
+                    // httpGet's onSuccess(context, data) would receive (data, undefined)).
+                    if (arguments[i] instanceof JsGraalAuthenticationContext) {
+                        requestBuilder.addArguments(
+                                ProtobufSerializer.toProto("__JsGraalAuthenticationContext_placeholder__"));
+                        continue;
+                    }
                     requestBuilder.addArguments(ProtobufSerializer.toProto(arguments[i]));
                 }
             }
 
             // Serialize bindings (excluding host functions)
-            log.info("[RemoteJsEngine] Total bindings to serialize: " + bindings.size() +
-                    ", keys: " + bindings.keySet());
-            log.info("[RemoteJsEngine] Host functions (excluded from bindings): " + hostFunctions.keySet());
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Total bindings to serialize: " + bindings.size() +
+                        ", keys: " + bindings.keySet());
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Host functions (excluded from bindings): " + hostFunctions.keySet());
+            }
             int bindingsAdded = 0;
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
-                if (!hostFunctions.containsKey(entry.getKey())) {
+                // Skip "context" -- JsGraalAuthenticationContext is not ProtobufSerializer-compatible.
+                // Context state is sent as structured ContextData and the sidecar accesses it
+                // via DynamicContextProxy callbacks. Serializing it here causes a toString()
+                // fallback with WARN log. If this binding is ever needed, implement a proper
+                // toProto() conversion for JsGraalAuthenticationContext first.
+                if (!"context".equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
                     Object value = entry.getValue();
-                    log.info("[RemoteJsEngine] Serializing binding: " + entry.getKey() + " = " +
-                            (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Serializing binding: " + entry.getKey() + " = " +
+                                (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
+                    }
                     requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(value));
                     bindingsAdded++;
                 }
             }
-            log.info("[RemoteJsEngine] Bindings serialized: " + bindingsAdded);
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Bindings serialized: " + bindingsAdded);
+            }
 
             // Add host function definitions so sidecar knows to create stubs for callbacks
-            log.info("[RemoteJsEngine] Adding " + hostFunctions.size() + " host function definitions");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Adding " + hostFunctions.size() + " host function definitions");
+            }
             for (String funcName : hostFunctions.keySet()) {
-                log.info("[RemoteJsEngine] Adding host function: " + funcName);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Adding host function: " + funcName);
+                }
                 requestBuilder.addHostFunctions(
                         HostFunctionDefinition.newBuilder()
                                 .setName(funcName)
@@ -375,7 +457,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             long tRequestBuilt = System.currentTimeMillis();
 
             // Phase 3: Transport round-trip
-            log.info("[RemoteJsEngine] Sending executeCallback request to remote engine...");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Sending executeCallback request to remote engine...");
+            }
             ExecuteCallbackResponse response = transport.sendExecuteCallback(requestBuilder.build());
             long tResponseReceived = System.currentTimeMillis();
 
@@ -394,12 +478,14 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 long tResponseProcessed = System.currentTimeMillis();
 
                 long isElapsed = tResponseProcessed - startTime;
-                log.info("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
-                        "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
-                        "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
-                        "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
-                        "ms, total=" + isElapsed + "ms" +
-                        ", sidecarReported=" + response.getElapsedMs() + "ms");
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
+                            "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
+                            "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
+                            "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
+                            "ms, total=" + isElapsed + "ms" +
+                            ", sidecarReported=" + response.getElapsedMs() + "ms");
+                }
 
                 evalResult = EvaluationResult.builder()
                         .success(true)
@@ -410,11 +496,13 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             } else {
                 long tResponseProcessed = System.currentTimeMillis();
                 long isElapsed = tResponseProcessed - startTime;
-                log.info("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
-                        "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
-                        "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
-                        "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
-                        "ms, total=" + isElapsed + "ms");
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
+                            "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
+                            "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
+                            "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
+                            "ms, total=" + isElapsed + "ms");
+                }
                 evalResult = EvaluationResult.failure(
                         response.getErrorMessage(),
                         "ExecutionError",
@@ -477,15 +565,19 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      */
     @Override
     public Object invokeHostFunction(String functionName, Object... args) throws Exception {
-        log.info("[RemoteJsEngine] invokeHostFunction called: " + functionName + " with " +
-                (args != null ? args.length : 0) + " args, session: " + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] invokeHostFunction called: " + functionName + " with " +
+                    (args != null ? args.length : 0) + " args, session: " + sessionId);
+        }
 
         // Log raw argument details for debugging.
         if (args != null) {
             for (int i = 0; i < args.length; i++) {
-                log.info("[RemoteJsEngine] Raw arg[" + i + "]: type=" +
-                        (args[i] != null ? args[i].getClass().getName() : "null") +
-                        ", value=" + (args[i] != null ? truncateForLog(args[i].toString()) : "null"));
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Raw arg[" + i + "]: type=" +
+                            (args[i] != null ? args[i].getClass().getName() : "null") +
+                            ", value=" + (args[i] != null ? truncateForLog(args[i].toString()) : "null"));
+                }
             }
         }
 
@@ -495,7 +587,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     ", available: " + hostFunctions.keySet());
             throw new IllegalArgumentException("Unknown host function: " + functionName);
         }
-        log.info("[RemoteJsEngine] Found host function impl: " + hostFunc.getClass().getName());
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] Found host function impl: " + hostFunc.getClass().getName());
+        }
 
         // Set up thread-local context for the host function invocation.
         // This ensures proper tenant context is available.
@@ -505,24 +599,32 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             // Find the @HostAccess.Export method to invoke.
             for (java.lang.reflect.Method method : hostFunc.getClass().getMethods()) {
                 if (method.isAnnotationPresent(org.graalvm.polyglot.HostAccess.Export.class)) {
-                    log.info("[RemoteJsEngine] Found @HostAccess.Export method: " + method.getName() +
-                            ", params: " + method.getParameterCount() +
-                            ", paramTypes: " + java.util.Arrays.toString(method.getParameterTypes()));
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Found @HostAccess.Export method: " + method.getName() +
+                                ", params: " + method.getParameterCount() +
+                                ", paramTypes: " + java.util.Arrays.toString(method.getParameterTypes()));
+                    }
 
                     // Adapt arguments to match method parameter types.
                     Object[] adaptedArgs = adaptArgumentsForMethod(method, args);
 
                     // Log adapted arguments.
                     for (int i = 0; i < adaptedArgs.length; i++) {
-                        log.info("[RemoteJsEngine] Adapted arg[" + i + "]: type=" +
-                                (adaptedArgs[i] != null ? adaptedArgs[i].getClass().getName() : "null"));
+                        if (log.isDebugEnabled()) {
+                            log.debug("[RemoteJsEngine] Adapted arg[" + i + "]: type=" +
+                                    (adaptedArgs[i] != null ? adaptedArgs[i].getClass().getName() : "null"));
+                        }
                     }
 
-                    log.info("[RemoteJsEngine] Invoking method with " + adaptedArgs.length + " adapted args");
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Invoking method with " + adaptedArgs.length + " adapted args");
+                    }
                     try {
                         Object result = method.invoke(hostFunc, adaptedArgs);
-                        log.info("[RemoteJsEngine] Method returned: " +
-                                (result != null ? result.getClass().getName() + "=" + result : "null"));
+                        if (log.isDebugEnabled()) {
+                            log.debug("[RemoteJsEngine] Method returned: " +
+                                    (result != null ? result.getClass().getName() + "=" + result : "null"));
+                        }
                         return result;
                     } catch (java.lang.reflect.InvocationTargetException e) {
                         // Log the actual cause of the error.
@@ -539,14 +641,18 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             }
 
             // Fallback: try to find a method matching common patterns.
-            log.info("[RemoteJsEngine] No @HostAccess.Export found, trying interface methods...");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] No @HostAccess.Export found, trying interface methods...");
+            }
             Class<?>[] hostInterfaces = hostFunc.getClass().getInterfaces();
             for (Class<?> iface : hostInterfaces) {
                 for (java.lang.reflect.Method method : iface.getMethods()) {
                     if (!method.isDefault() && method.getParameterCount() <= args.length) {
                         try {
                             Object[] adaptedArgs = adaptArgumentsForMethod(method, args);
-                            log.info("[RemoteJsEngine] Trying method: " + iface.getName() + "." + method.getName());
+                            if (log.isDebugEnabled()) {
+                                log.debug("[RemoteJsEngine] Trying method: " + iface.getName() + "." + method.getName());
+                            }
                             return method.invoke(hostFunc, adaptedArgs);
                         } catch (IllegalArgumentException e) {
                             log.debug("[RemoteJsEngine] Method mismatch: " + method.getName());
@@ -728,8 +834,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      */
     @Override
     public boolean setContextProperty(String propertyPath, Object value) throws Exception {
-        log.info("[RemoteJsEngine] setContextProperty called: " + propertyPath + " = " +
-                (value != null ? value.getClass().getSimpleName() : "null") + ", session: " + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] setContextProperty called: " + propertyPath + " = " +
+                    (value != null ? value.getClass().getSimpleName() : "null") + ", session: " + sessionId);
+        }
 
         // Handle host function return references
         if (propertyPath.startsWith("__hostref__::")) {
@@ -770,8 +878,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     try {
                         java.lang.reflect.Method getMethod = parent.getClass().getMethod("get", long.class);
                         parent = getMethod.invoke(parent, (long) index);
-                        log.info("[RemoteJsEngine] setContextProperty: used reflection get(" + index +
-                                ") on " + parent.getClass().getSimpleName());
+                        if (log.isDebugEnabled()) {
+                            log.debug("[RemoteJsEngine] setContextProperty: used reflection get(" + index +
+                                    ") on " + parent.getClass().getSimpleName());
+                        }
                     } catch (NoSuchMethodException nsme) {
                         // Not a ProxyArray-like object, try ProxyObject.getMember
                         if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
@@ -822,7 +932,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             try {
                 Value wrappedValue = Value.asValue(value);
                 ((org.graalvm.polyglot.proxy.ProxyObject) parent).putMember(finalPart, wrappedValue);
-                log.info("[RemoteJsEngine] Successfully set property via putMember: " + propertyPath);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Successfully set property via putMember: " + propertyPath);
+                }
                 return true;
             } catch (Exception e) {
                 log.warn("[RemoteJsEngine] Direct putMember failed: " + e.getMessage());
@@ -834,7 +946,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                         "putMember", String.class, Value.class);
                 Value wrappedValue = Value.asValue(value);
                 putMethod.invoke(parent, finalPart, wrappedValue);
-                log.info("[RemoteJsEngine] Successfully set property via reflection putMember: " + propertyPath);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Successfully set property via reflection putMember: " + propertyPath);
+                }
                 return true;
             } catch (NoSuchMethodException nsme) {
                 // No putMember(String, Value) method — fall through to other approaches
@@ -847,7 +961,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             @SuppressWarnings("unchecked")
             java.util.Map<String, Object> map = (java.util.Map<String, Object>) parent;
             map.put(finalPart, value);
-            log.info("[RemoteJsEngine] Successfully set property in map: " + propertyPath);
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Successfully set property in map: " + propertyPath);
+            }
             return true;
         }
 
@@ -858,7 +974,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             for (java.lang.reflect.Method method : methods) {
                 if (method.getName().equals(setterName) && method.getParameterCount() == 1) {
                     method.invoke(parent, value);
-                    log.info("[RemoteJsEngine] Successfully set property via setter: " + propertyPath);
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Successfully set property via setter: " + propertyPath);
+                    }
                     return true;
                 }
             }
@@ -925,7 +1043,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             try {
                 Value wrappedValue = Value.asValue(value);
                 ((org.graalvm.polyglot.proxy.ProxyObject) current).putMember(finalPart, wrappedValue);
-                log.info("[RemoteJsEngine] Successfully set host ref property: " + path);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Successfully set host ref property: " + path);
+                }
                 return true;
             } catch (Exception e) {
                 log.warn("[RemoteJsEngine] putMember failed on host ref: " + e.getMessage());
@@ -949,8 +1069,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      */
     private void setupThreadContext() {
         if (authContext != null) {
-            log.info("[RemoteJsEngine] Setting up thread context for tenant: " + authContext.getTenantDomain() +
-                    ", contextId: " + authContext.getContextIdentifier());
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Setting up thread context for tenant: " + authContext.getTenantDomain() +
+                        ", contextId: " + authContext.getContextIdentifier());
+            }
             try {
                 // Set Carbon context for the current thread.
                 org.wso2.carbon.context.PrivilegedCarbonContext carbonContext = org.wso2.carbon.context.PrivilegedCarbonContext
@@ -964,15 +1086,19 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 if (authContext.getSubject() != null) {
                     carbonContext.setUsername(authContext.getSubject().getUserName());
                 }
-                log.info("[RemoteJsEngine] Thread context set - tenantDomain: " + carbonContext.getTenantDomain() +
-                        ", tenantId: " + carbonContext.getTenantId() +
-                        ", username: " + carbonContext.getUsername());
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Thread context set - tenantDomain: " + carbonContext.getTenantDomain() +
+                            ", tenantId: " + carbonContext.getTenantId() +
+                            ", username: " + carbonContext.getUsername());
+                }
 
                 // Set JsGraalGraphBuilder thread-local contexts for host function callbacks.
                 // This is critical for executeStep and other functions that need the context.
                 JsGraalGraphBuilder.setContextForJsThreadLocal(authContext);
-                log.info("[RemoteJsEngine] Set contextForJs ThreadLocal with authContext: " +
-                        authContext.getContextIdentifier());
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Set contextForJs ThreadLocal with authContext: " +
+                            authContext.getContextIdentifier());
+                }
 
                 // Set dynamicallyBuiltBaseNode from accumulated value across gRPC callbacks.
                 // In local mode, this ThreadLocal starts null during callback execution and
@@ -984,8 +1110,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 // the local mode single-thread accumulation behavior.
                 if (accumulatedDynamicBaseNode != null) {
                     JsGraalGraphBuilder.setDynamicallyBuiltBaseNodeThreadLocal(accumulatedDynamicBaseNode);
-                    log.info("[RemoteJsEngine] Set dynamicallyBuiltBaseNode from accumulated: " +
-                            accumulatedDynamicBaseNode.getClass().getSimpleName());
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Set dynamicallyBuiltBaseNode from accumulated: " +
+                                accumulatedDynamicBaseNode.getClass().getSimpleName());
+                    }
                 } else {
                     log.debug("[RemoteJsEngine] dynamicallyBuiltBaseNode accumulated is null (initial state)");
                 }
@@ -995,8 +1123,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 // which are used by async host functions (e.g., updateUserPassword).
                 if (graphBuilder != null) {
                     JsGraalGraphBuilder.setCurrentBuilderThreadLocal(graphBuilder);
-                    log.info("[RemoteJsEngine] Set currentBuilder ThreadLocal: " +
-                            graphBuilder.getClass().getSimpleName());
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Set currentBuilder ThreadLocal: " +
+                                graphBuilder.getClass().getSimpleName());
+                    }
                 }
 
             } catch (Exception e) {
@@ -1015,8 +1145,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             AuthGraphNode currentDynamicNode = JsGraalGraphBuilder.getDynamicallyBuiltBaseNodeThreadLocal();
             if (currentDynamicNode != null) {
                 this.accumulatedDynamicBaseNode = currentDynamicNode;
-                log.info("[RemoteJsEngine] Saved dynamicallyBuiltBaseNode to accumulated: " +
-                        currentDynamicNode.getClass().getSimpleName());
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Saved dynamicallyBuiltBaseNode to accumulated: " +
+                            currentDynamicNode.getClass().getSimpleName());
+                }
             }
             JsGraalGraphBuilder.removeContextForJsThreadLocal();
             JsGraalGraphBuilder.removeDynamicallyBuiltBaseNodeThreadLocal();
@@ -1052,8 +1184,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         Class<?>[] paramTypes = method.getParameterTypes();
         boolean isVarArgs = method.isVarArgs();
 
-        log.info("[RemoteJsEngine] adaptArgumentsForMethod: paramCount=" + paramTypes.length +
-                ", argsCount=" + (args != null ? args.length : 0) + ", isVarArgs=" + isVarArgs);
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] adaptArgumentsForMethod: paramCount=" + paramTypes.length +
+                    ", argsCount=" + (args != null ? args.length : 0) + ", isVarArgs=" + isVarArgs);
+        }
 
         // For varargs methods, we need special handling.
         if (isVarArgs && args != null) {
@@ -1071,9 +1205,11 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             Object arg = args[i];
             Class<?> paramType = paramTypes[i];
 
-            log.info("[RemoteJsEngine] Adapting arg[" + i + "] from " +
-                    (arg != null ? arg.getClass().getSimpleName() : "null") +
-                    " to " + paramType.getSimpleName());
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Adapting arg[" + i + "] from " +
+                        (arg != null ? arg.getClass().getSimpleName() : "null") +
+                        " to " + paramType.getSimpleName());
+            }
 
             adaptedArgs[i] = adaptSingleArgument(arg, paramType);
         }
@@ -1098,16 +1234,20 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         int fixedParamCount = paramTypes.length - 1;
         Class<?> varArgType = paramTypes[fixedParamCount].getComponentType();
 
-        log.info("[RemoteJsEngine] Adapting varargs method: fixedParams=" + fixedParamCount +
-                ", varArgType=" + varArgType.getSimpleName() + ", totalArgs=" + args.length);
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] Adapting varargs method: fixedParams=" + fixedParamCount +
+                    ", varArgType=" + varArgType.getSimpleName() + ", totalArgs=" + args.length);
+        }
 
         Object[] adaptedArgs = new Object[paramTypes.length];
 
         // Adapt fixed parameters.
         for (int i = 0; i < fixedParamCount && i < args.length; i++) {
-            log.info("[RemoteJsEngine] Adapting fixed arg[" + i + "] from " +
-                    (args[i] != null ? args[i].getClass().getSimpleName() : "null") +
-                    " to " + paramTypes[i].getSimpleName());
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Adapting fixed arg[" + i + "] from " +
+                        (args[i] != null ? args[i].getClass().getSimpleName() : "null") +
+                        " to " + paramTypes[i].getSimpleName());
+            }
             adaptedArgs[i] = adaptSingleArgument(args[i], paramTypes[i]);
         }
 
@@ -1121,11 +1261,15 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             if (args[i] != null) {
                 Object adapted = adaptSingleArgument(args[i], varArgType);
                 nonNullVarArgs.add(adapted);
-                log.info("[RemoteJsEngine] Adapting vararg[" + (i - fixedParamCount) + "] from " +
-                        args[i].getClass().getSimpleName() + " to " + varArgType.getSimpleName());
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Adapting vararg[" + (i - fixedParamCount) + "] from " +
+                            args[i].getClass().getSimpleName() + " to " + varArgType.getSimpleName());
+                }
             } else {
-                log.info("[RemoteJsEngine] Skipping null vararg at index " + i +
-                        " (undefined/null from remote serialization)");
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Skipping null vararg at index " + i +
+                            " (undefined/null from remote serialization)");
+                }
             }
         }
 
@@ -1141,8 +1285,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             adaptedArgs[fixedParamCount] = java.lang.reflect.Array.newInstance(varArgType, 0);
         }
 
-        log.info("[RemoteJsEngine] Final varargs count: " + nonNullVarArgs.size() +
-                " (from " + (args.length - fixedParamCount) + " raw args)");
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] Final varargs count: " + nonNullVarArgs.size() +
+                    " (from " + (args.length - fixedParamCount) + " raw args)");
+        }
         return adaptedArgs;
     }
 
@@ -1165,14 +1311,18 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             if (Boolean.TRUE.equals(map.get("__isContextProxy"))) {
                 String proxyType = (String) map.get("__proxyType");
                 String basePath = (String) map.get("__basePath");
-                log.info("[RemoteJsEngine] Received context proxy marker: type=" + proxyType +
-                        ", basePath=" + basePath);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Received context proxy marker: type=" + proxyType +
+                            ", basePath=" + basePath);
+                }
 
                 // Reconstruct the actual object based on proxyType and basePath
                 Object reconstructed = reconstructFromContextProxy(proxyType, basePath, paramType);
                 if (reconstructed != null) {
-                    log.info("[RemoteJsEngine] Reconstructed " + reconstructed.getClass().getSimpleName() +
-                            " from context proxy marker");
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Reconstructed " + reconstructed.getClass().getSimpleName() +
+                                " from context proxy marker");
+                    }
                     return reconstructed;
                 }
             }
@@ -1181,7 +1331,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         // Handle JsAuthenticationContext - reconstruct from stored authContext.
         if (paramType.getSimpleName().contains("JsAuthenticationContext") ||
                 paramType.getSimpleName().contains("JsGraalAuthenticationContext")) {
-            log.info("[RemoteJsEngine] Reconstructed JsGraalAuthenticationContext from stored authContext");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Reconstructed JsGraalAuthenticationContext from stored authContext");
+            }
             return new JsGraalAuthenticationContext(authContext);
         }
 
@@ -1259,7 +1411,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             if (arg instanceof Map) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> mapArg = (Map<String, Object>) arg;
-                log.info("[RemoteJsEngine] Coercing number types in Map with " + mapArg.size() + " entries");
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Coercing number types in Map with " + mapArg.size() + " entries");
+                }
                 return coerceMapNumberTypes(mapArg);
             }
             return arg;
@@ -1286,7 +1440,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     // Whole number — convert to Integer (or Long if out of int range)
                     if (d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
                         entry.setValue((int) d);
-                        log.info("[RemoteJsEngine] Coerced " + entry.getKey() + ": " + d + " -> " + (int) d);
+                        if (log.isDebugEnabled()) {
+                            log.debug("[RemoteJsEngine] Coerced " + entry.getKey() + ": " + d + " -> " + (int) d);
+                        }
                     } else {
                         entry.setValue((long) d);
                     }
@@ -1314,7 +1470,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
         // If basePath is empty or null, return the full context
         if (basePath == null || basePath.isEmpty()) {
-            log.info("[RemoteJsEngine] Reconstructing root context");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Reconstructing root context");
+            }
             return new JsGraalAuthenticationContext(authContext);
         }
 
@@ -1326,7 +1484,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         if ("authenticateduser".equals(proxyType) && basePath.matches("steps::\\d+::subject")) {
             String[] parts = basePath.split("::");
             int stepNum = Integer.parseInt(parts[1]);
-            log.info("[RemoteJsEngine] Direct reconstruction of authenticateduser for step " + stepNum);
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Direct reconstruction of authenticateduser for step " + stepNum);
+            }
 
             if (authContext.getSequenceConfig() != null) {
                 // Find the authenticated IDP for this step
@@ -1348,8 +1508,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     if (idPData != null && idPData.getUser() != null) {
                         Object result = JsWrapperFactoryProvider.getInstance().getWrapperFactory()
                                 .createJsAuthenticatedUser(authContext, idPData.getUser(), stepNum, authenticatedIdp);
-                        log.info("[RemoteJsEngine] Directly reconstructed " +
-                                result.getClass().getSimpleName() + " for step " + stepNum);
+                        if (log.isDebugEnabled()) {
+                            log.debug("[RemoteJsEngine] Directly reconstructed " +
+                                    result.getClass().getSimpleName() + " for step " + stepNum);
+                        }
                         return result;
                     }
                     log.warn("[RemoteJsEngine] No authenticated user found for IdP: " + authenticatedIdp +
@@ -1361,7 +1523,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         // Generic proxy navigation fallback for other proxy types/paths
-        log.info("[RemoteJsEngine] Navigating to nested property: " + basePath);
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] Navigating to nested property: " + basePath);
+        }
 
         try {
             String[] pathParts = basePath.split("::");
@@ -1401,8 +1565,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 }
             }
 
-            log.info("[RemoteJsEngine] Successfully navigated to: " + basePath +
-                    ", result type: " + (current != null ? current.getClass().getSimpleName() : "null"));
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Successfully navigated to: " + basePath +
+                        ", result type: " + (current != null ? current.getClass().getSimpleName() : "null"));
+            }
             return current;
 
         } catch (Exception e) {
@@ -1412,21 +1578,31 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     }
 
     private void ensureConnected() throws IOException {
-        log.info("[RemoteJsEngine] ensureConnected - transport: " + transport.getClass().getSimpleName() +
-                ", connected: " + transport.isConnected());
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] ensureConnected - transport: " + transport.getClass().getSimpleName() +
+                    ", connected: " + transport.isConnected());
+        }
         if (!transport.isConnected()) {
-            log.info("[RemoteJsEngine] Connecting transport");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Connecting transport");
+            }
             transport.connect();
-            log.info("[RemoteJsEngine] Connected to remote engine successfully");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Connected to remote engine successfully");
+            }
         }
     }
 
     private void ensureHandlerRegistered() throws IOException {
         if (!handlerRegistered) {
-            log.info("[RemoteJsEngine] Starting callback server if needed");
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Starting callback server if needed");
+            }
             callbackServer.start();
-            log.info("[RemoteJsEngine] Registering handler with callback server: " +
-                    callbackServer.getClass().getSimpleName());
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Registering handler with callback server: " +
+                        callbackServer.getClass().getSimpleName());
+            }
             callbackServer.registerHandler(sessionId, this);
             handlerRegistered = true;
         }

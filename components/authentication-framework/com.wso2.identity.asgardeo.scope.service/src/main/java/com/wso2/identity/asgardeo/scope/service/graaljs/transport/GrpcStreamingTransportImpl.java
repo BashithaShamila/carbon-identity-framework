@@ -91,8 +91,10 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         this.requestTimeout = requestTimeout;
         this.connectionManager = GrpcConnectionManager.getInstance();
         this.correlationId = UUID.randomUUID().toString();
-        log.info("[GrpcStreaming] Created streaming transport for target: " + grpcTarget +
-                ", timeout: " + requestTimeout + "s, correlationId: " + correlationId);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] Created streaming transport for target: " + grpcTarget +
+                    ", timeout: " + requestTimeout + "s, correlationId: " + correlationId);
+        }
     }
 
     // ============ RemoteEngineTransport Methods ============
@@ -103,8 +105,10 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         long t0 = System.currentTimeMillis();
         System.out.println("[PERF] [" + t0 + "] IS EVALUATE_START session=" + sessionId +
                 " startTs=" + t0 + " scriptLen=" + request.getScript().length());
-        log.info("[GrpcStreaming] sendEvaluate() - session: " + sessionId +
-                ", script length: " + request.getScript().length());
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] sendEvaluate() - session: " + sessionId +
+                    ", script length: " + request.getScript().length());
+        }
 
         ensureStub();
 
@@ -135,7 +139,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         System.out.println("[PERF] [" + t3 + "] IS EVALUATE_SENT session=" + sessionId +
                 " startTs=" + t0 + " streamOpenedTs=" + t2 + " sentTs=" + t3 +
                 " sendMs=" + (t3 - t2) + " sinceStartMs=" + (t3 - t0));
-        log.info("[GrpcStreaming] Sent EvaluateRequest on stream, session: " + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] Sent EvaluateRequest on stream, session: " + sessionId);
+        }
 
         try {
             EvaluateResponse response = evalFuture.get(requestTimeout, TimeUnit.SECONDS);
@@ -144,8 +150,10 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                     " success=" + response.getSuccess() +
                     " startTs=" + t0 + " sentTs=" + t3 + " responseTs=" + t4 +
                     " waitMs=" + (t4 - t3) + " totalMs=" + (t4 - t0));
-            log.info("[GrpcStreaming] Received EvaluateResponse, session: " + sessionId +
-                    ", success: " + response.getSuccess());
+            if (log.isDebugEnabled()) {
+                log.debug("[GrpcStreaming] Received EvaluateResponse, session: " + sessionId +
+                        ", success: " + response.getSuccess());
+            }
             return response;
         } catch (TimeoutException e) {
             long tErr = System.currentTimeMillis();
@@ -180,8 +188,10 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         long t0 = System.currentTimeMillis();
         System.out.println("[PERF] [" + t0 + "] IS EXEC_CALLBACK_START session=" + sessionId +
                 " startTs=" + t0 + " fnLen=" + request.getFunctionSource().length());
-        log.info("[GrpcStreaming] sendExecuteCallback() - session: " + sessionId +
-                ", function length: " + request.getFunctionSource().length());
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] sendExecuteCallback() - session: " + sessionId +
+                    ", function length: " + request.getFunctionSource().length());
+        }
 
         ensureStub();
 
@@ -212,7 +222,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         System.out.println("[PERF] [" + t3 + "] IS EXEC_CALLBACK_SENT session=" + sessionId +
                 " startTs=" + t0 + " streamOpenedTs=" + t2 + " sentTs=" + t3 +
                 " sendMs=" + (t3 - t2) + " sinceStartMs=" + (t3 - t0));
-        log.info("[GrpcStreaming] Sent ExecuteCallbackRequest on stream, session: " + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] Sent ExecuteCallbackRequest on stream, session: " + sessionId);
+        }
 
         try {
             ExecuteCallbackResponse response = callbackFuture.get(requestTimeout, TimeUnit.SECONDS);
@@ -221,8 +233,10 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                     " success=" + response.getSuccess() +
                     " startTs=" + t0 + " sentTs=" + t3 + " responseTs=" + t4 +
                     " waitMs=" + (t4 - t3) + " totalMs=" + (t4 - t0));
-            log.info("[GrpcStreaming] Received ExecuteCallbackResponse, session: " + sessionId +
-                    ", success: " + response.getSuccess());
+            if (log.isDebugEnabled()) {
+                log.debug("[GrpcStreaming] Received ExecuteCallbackResponse, session: " + sessionId +
+                        ", success: " + response.getSuccess());
+            }
             return response;
         } catch (TimeoutException e) {
             long tErr = System.currentTimeMillis();
@@ -253,9 +267,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
     @Override
     public void connect() throws IOException {
-        log.info("[GrpcStreaming] connect() to " + grpcTarget);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] connect() to " + grpcTarget);
+        }
         ensureStub();
-        log.info("[GrpcStreaming] Connected successfully to: " + grpcTarget);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] Connected successfully to: " + grpcTarget);
+        }
     }
 
     @Override
@@ -267,8 +285,10 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
     @Override
     public void close() throws IOException {
-        log.info("[GrpcStreaming] close() called - singleton transport, stub remains active, " +
-                "correlationId: " + correlationId);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] close() called - singleton transport, stub remains active, " +
+                    "correlationId: " + correlationId);
+        }
         // Don't null out asyncStub - this is a singleton transport shared across all sessions.
         // Per-session cleanup is handled by unregisterHandler() and stream onCompleted() in finally.
     }
@@ -277,13 +297,17 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
     @Override
     public void registerHandler(String sessionId, HostFunctionHandler handler) {
-        log.info("[GrpcStreaming] registerHandler for session: " + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] registerHandler for session: " + sessionId);
+        }
         sessionHandlers.put(sessionId, handler);
     }
 
     @Override
     public void unregisterHandler(String sessionId) {
-        log.info("[GrpcStreaming] unregisterHandler for session: " + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] unregisterHandler for session: " + sessionId);
+        }
         sessionHandlers.remove(sessionId);
     }
 
@@ -296,7 +320,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     @Override
     public void start() throws IOException {
         // No-op: streaming doesn't need a separate callback server
-        log.info("[GrpcStreaming] start() - no separate callback server needed in streaming mode");
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] start() - no separate callback server needed in streaming mode");
+        }
     }
 
     // ============ Private Helpers ============
@@ -330,8 +356,10 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             @Override
             public void onNext(StreamMessage message) {
                 long now = System.currentTimeMillis();
-                log.info("[GrpcStreaming] Received message type: " + message.getPayloadCase() +
-                        ", session: " + message.getSessionId());
+                if (log.isDebugEnabled()) {
+                    log.debug("[GrpcStreaming] Received message type: " + message.getPayloadCase() +
+                            ", session: " + message.getSessionId());
+                }
 
                 switch (message.getPayloadCase()) {
                     case EVALUATE_RESPONSE:
@@ -416,7 +444,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                         sessionId + " streamStartTs=" + streamStartTime +
                         " completedTs=" + completedTs +
                         " sinceStreamStartMs=" + (completedTs - streamStartTime));
-                log.info("[GrpcStreaming] Stream completed, session: " + sessionId);
+                if (log.isDebugEnabled()) {
+                    log.debug("[GrpcStreaming] Stream completed, session: " + sessionId);
+                }
                 if (evalFuture != null && !evalFuture.isDone()) {
                     evalFuture.completeExceptionally(
                             new IOException("Stream completed without response"));
@@ -439,7 +469,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         long hfStart = System.currentTimeMillis();
         System.out.println("[PERF] [" + hfStart + "] IS HOST_FN_HANDLE_START session=" + sessionId +
                 " fn=" + functionName + " handleStartTs=" + hfStart);
-        log.info("[GrpcStreaming] handleHostFunction: " + functionName + ", session: " + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] handleHostFunction: " + functionName + ", session: " + sessionId);
+        }
 
         StreamContext ctx = streamRegistry.get(sessionId);
         if (ctx == null) {
@@ -478,16 +510,20 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                     " deserMs=" + (hfExecStart - hfStart) +
                     " execMs=" + (hfExecEnd - hfExecStart) +
                     " totalMs=" + (hfExecEnd - hfStart));
-            log.info("[GrpcStreaming] Host function " + functionName + " returned: " +
-                    (result != null ? result.getClass().getSimpleName() : "null"));
+            if (log.isDebugEnabled()) {
+                log.debug("[GrpcStreaming] Host function " + functionName + " returned: " +
+                        (result != null ? result.getClass().getSimpleName() : "null"));
+            }
 
             // Serialize result: use proxy object for complex types, primitive serialization otherwise
             SerializedValue serializedResult;
             if (result != null && isProxyType(result)) {
                 String refId = handler.storeObjectReference(result);
                 String proxyType = getProxyType(result);
-                log.info("[GrpcStreaming] Serializing complex result as proxy: type=" + proxyType +
-                        ", refId=" + refId);
+                if (log.isDebugEnabled()) {
+                    log.debug("[GrpcStreaming] Serializing complex result as proxy: type=" + proxyType +
+                            ", refId=" + refId);
+                }
                 serializedResult = SerializedValue.newBuilder()
                         .setProxyObject(SerializedProxyObject.newBuilder()
                                 .setType(proxyType)
@@ -536,7 +572,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         long cpStart = System.currentTimeMillis();
         System.out.println("[PERF] [" + cpStart + "] IS CTX_PROP_HANDLE_START session=" + sessionId +
                 " path=" + propertyPath + " handleStartTs=" + cpStart);
-        log.info("[GrpcStreaming] handleContextProperty: " + propertyPath + ", session: " + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] handleContextProperty: " + propertyPath + ", session: " + sessionId);
+        }
 
         StreamContext ctx = streamRegistry.get(sessionId);
         if (ctx == null) {
@@ -625,7 +663,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         long cpsStart = System.currentTimeMillis();
         System.out.println("[PERF] [" + cpsStart + "] IS CTX_PROP_SET_HANDLE_START session=" + sessionId +
                 " path=" + propertyPath + " handleStartTs=" + cpsStart);
-        log.info("[GrpcStreaming] handleContextPropertySet: " + propertyPath + ", session: " + sessionId);
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] handleContextPropertySet: " + propertyPath + ", session: " + sessionId);
+        }
 
         StreamContext ctx = streamRegistry.get(sessionId);
         if (ctx == null) {
@@ -696,7 +736,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         if (asyncStub == null) {
             ManagedChannel channel = connectionManager.getClientChannel(grpcTarget);
             asyncStub = JsEngineStreamingServiceGrpc.newStub(channel);
-            log.info("[GrpcStreaming] Created async stub for target: " + grpcTarget);
+            if (log.isDebugEnabled()) {
+                log.debug("[GrpcStreaming] Created async stub for target: " + grpcTarget);
+            }
         }
     }
 

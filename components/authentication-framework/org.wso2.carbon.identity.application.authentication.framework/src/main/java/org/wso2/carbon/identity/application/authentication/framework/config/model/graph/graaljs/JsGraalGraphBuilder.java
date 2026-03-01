@@ -228,11 +228,15 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         // Check if we should use remote execution via sidecar.
         JsEngineFactory jsEngineFactory = JsEngineFactory.getInstance();
         if (jsEngineFactory.getDefaultMode() == JsEngineFactory.ExecutionMode.REMOTE) {
-            log.info("[createWith] Using REMOTE execution mode via sidecar");
+            if (log.isDebugEnabled()) {
+                log.debug("[createWith] Using REMOTE execution mode via sidecar");
+            }
             return createWithRemote(script);
         }
 
-        log.info("[createWith] Using LOCAL execution mode");
+        if (log.isDebugEnabled()) {
+            log.debug("[createWith] Using LOCAL execution mode");
+        }
         try {
             currentBuilder.set(this);
             Value bindings = context.getBindings(POLYGLOT_LANGUAGE);
@@ -283,12 +287,16 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     scriptExecutionData ->
                             storeAuthScriptExecutionMonitorData(authenticationContext,
                             scriptExecutionData));
-            log.info("[createWith] About to persist context bindings for SP: " +
-                    authenticationContext.getServiceProviderName() +
-                    ", contextId: " + authenticationContext.getContextIdentifier() +
-                    ", authContext hashCode: " + System.identityHashCode(authenticationContext));
+            if (log.isDebugEnabled()) {
+                log.debug("[createWith] About to persist context bindings for SP: " +
+                        authenticationContext.getServiceProviderName() +
+                        ", contextId: " + authenticationContext.getContextIdentifier() +
+                        ", authContext hashCode: " + System.identityHashCode(authenticationContext));
+            }
             JsGraalGraphBuilderFactory.persistCurrentContext(authenticationContext, context);
-            log.info("[createWith] Bindings persisted successfully");
+            if (log.isDebugEnabled()) {
+                log.debug("[createWith] Bindings persisted successfully");
+            }
         } catch (PolyglotException e) {
             result.setBuildSuccessful(false);
             result.setErrorReason(
@@ -328,8 +336,10 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 ((RemoteJsEngine) jsEngine).setGraphBuilder(this);
             }
 
-            log.info("[createWithRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
-                    ", contextId: " + authenticationContext.getContextIdentifier());
+            if (log.isDebugEnabled()) {
+                log.debug("[createWithRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
+                        ", contextId: " + authenticationContext.getContextIdentifier());
+            }
 
             // Register host functions that the sidecar can call back.
             Map<String, Object> hostFunctions = new HashMap<>();
@@ -345,8 +355,10 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                         JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER));
             }
             jsEngine.registerHostFunctions(hostFunctions);
-            log.info("[createWithRemote] Registered " + hostFunctions.size() + " host functions: " +
-                    hostFunctions.keySet());
+            if (log.isDebugEnabled()) {
+                log.debug("[createWithRemote] Registered " + hostFunctions.size() + " host functions: " +
+                        hostFunctions.keySet());
+            }
 
             // Build the complete script including require function, secrets, and main
             // script.
@@ -360,8 +372,10 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     // context.
                     JS_FUNC_ON_LOGIN_REQUEST + "(context);";
 
-            log.info("[createWithRemote] Sending script (length: " + completeScript.length() +
-                    ") to sidecar for evaluation");
+            if (log.isDebugEnabled()) {
+                log.debug("[createWithRemote] Sending script (length: " + completeScript.length() +
+                        ") to sidecar for evaluation");
+            }
 
             // Build initial bindings (context will be created by sidecar from ContextData).
             Map<String, Object> initialBindings = new HashMap<>();
@@ -383,13 +397,17 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     return this;
                 }
 
-                log.info("[createWithRemote] Script evaluation successful, elapsed: " +
-                        evalResult.getElapsedMs() + "ms");
+                if (log.isDebugEnabled()) {
+                    log.debug("[createWithRemote] Script evaluation successful, elapsed: " +
+                            evalResult.getElapsedMs() + "ms");
+                }
 
                 // Update bindings from sidecar response.
                 if (evalResult.getUpdatedBindings() != null) {
-                    log.info("[createWithRemote] Updating bindings from sidecar: " +
-                            evalResult.getUpdatedBindings().keySet());
+                    if (log.isDebugEnabled()) {
+                        log.debug("[createWithRemote] Updating bindings from sidecar: " +
+                                evalResult.getUpdatedBindings().keySet());
+                    }
                     for (Map.Entry<String, Object> entry : evalResult.getUpdatedBindings().entrySet()) {
                         // Convert binding to serializable form for persistence.
                         Object value = entry.getValue();
@@ -413,14 +431,18 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                             storeAuthScriptExecutionMonitorData(authenticationContext,
                             scriptExecutionData));
 
-            log.info("[createWithRemote] Script execution completed for SP: " +
-                    authenticationContext.getServiceProviderName());
+            if (log.isDebugEnabled()) {
+                log.debug("[createWithRemote] Script execution completed for SP: " +
+                        authenticationContext.getServiceProviderName());
+            }
 
             // Persist bindings for later callback execution.
             // Note: With remote execution, we persist the updated bindings from sidecar.
             Map<String, Object> persistableBindings = jsEngine.getBindings();
             authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", persistableBindings);
-            log.info("[createWithRemote] Persisted " + persistableBindings.size() + " bindings");
+            if (log.isDebugEnabled()) {
+                log.debug("[createWithRemote] Persisted " + persistableBindings.size() + " bindings");
+            }
 
         } catch (Exception e) {
             log.error("[createWithRemote] Error during remote script evaluation", e);
@@ -477,30 +499,40 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         if (eventsMap == null) {
             return;
         }
-        log.info("[addEventListeners] Received eventsMap with " + eventsMap.size() + " entries");
+        if (log.isDebugEnabled()) {
+            log.debug("[addEventListeners] Received eventsMap with " + eventsMap.size() + " entries");
+        }
         eventsMap.forEach((key, value) -> {
-            log.info("[addEventListeners] Processing event: " + key + ", value type: " +
-                    (value != null ? value.getClass().getName() : "null") +
-                    ", isValue: " + (value instanceof Value) +
-                    ", isMap: " + (value instanceof Map));
+            if (log.isDebugEnabled()) {
+                log.debug("[addEventListeners] Processing event: " + key + ", value type: " +
+                        (value != null ? value.getClass().getName() : "null") +
+                        ", isValue: " + (value instanceof Value) +
+                        ", isMap: " + (value instanceof Map));
+            }
 
             // Check if it's a PolyglotMapAndFunction - detect by class name since it's not instanceof Value
             if (value != null && value.getClass().getName().contains("PolyglotMapAndFunction")) {
-                log.info("[addEventListeners] Detected PolyglotMapAndFunction for event: " + key);
+                if (log.isDebugEnabled()) {
+                    log.debug("[addEventListeners] Detected PolyglotMapAndFunction for event: " + key);
+                }
                 try {
                     // Try to convert to Value using current Context
                     Context currentContext = Context.getCurrent();
                     if (currentContext != null) {
                         Value valueAsValue = currentContext.asValue(value);
                         if (valueAsValue.canExecute()) {
-                            log.info("[addEventListeners] Successfully converted to executable Value");
+                            if (log.isDebugEnabled()) {
+                                log.debug("[addEventListeners] Successfully converted to executable Value");
+                            }
                             GraalSerializableJsFunction jsFunction = 
                                 GraalSerializableJsFunction.toSerializableForm(valueAsValue);
                             if (jsFunction != null) {
                                 decisionNode.addGenericFunction(key, jsFunction);
                                 String eventMessage = "[addEventListeners] Successfully serialized " +
                                     "PolyglotMapAndFunction for event: " + key;
-                                log.info(eventMessage);
+                                if (log.isDebugEnabled()) {
+                                    log.debug(eventMessage);
+                                }
                                 return; // Skip further processing
                             }
                         }
@@ -543,7 +575,9 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     if (funcSource != null) {
                         GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(funcSource);
                         decisionNode.addGenericFunction(key, jsFunction);
-                        log.info("Created GraalSerializableJsFunction from Map value for event: " + key);
+                        if (log.isDebugEnabled()) {
+                            log.debug("Created GraalSerializableJsFunction from Map value for event: " + key);
+                        }
                     } else {
                         log.error("Event handler : " + key + " is a Map but has no usable function source. Keys: " +
                                 funcMap.keySet() + ", values: " + funcMap.values());
@@ -619,7 +653,9 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     if (funcSource != null) {
                         GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(funcSource);
                         showPromptNode.addGenericHandler(key, jsFunction);
-                        log.info("Created GraalSerializableJsFunction from Map value for handler: " + key);
+                        if (log.isDebugEnabled()) {
+                            log.debug("Created GraalSerializableJsFunction from Map value for handler: " + key);
+                        }
                     } else {
                         log.error("Handler : " + key + " is a Map but has no usable function source. Keys: " +
                                 funcMap.keySet() + ", values: " + funcMap.values());
@@ -987,28 +1023,36 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 }
 
                 // Log context info for debugging.
-                log.info("[evaluateRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
-                        ", contextId: " + authenticationContext.getContextIdentifier() +
-                        ", step: " + authenticationContext.getCurrentStep() +
-                        ", authContext hashCode: " + System.identityHashCode(authenticationContext));
+                if (log.isDebugEnabled()) {
+                    log.debug("[evaluateRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
+                            ", contextId: " + authenticationContext.getContextIdentifier() +
+                            ", step: " + authenticationContext.getCurrentStep() +
+                            ", authContext hashCode: " + System.identityHashCode(authenticationContext));
+                }
 
                 // Get persisted bindings from authentication context (variables like
                 // rolesToStepUp).
                 Map<String, Object> persistedBindings = (Map<String, Object>) authenticationContext
                         .getProperty("JS_BINDING_CURRENT_CONTEXT");
                 if (persistedBindings != null) {
-                    log.info("[evaluateRemote] Found " + persistedBindings.size() +
-                            " persisted bindings: " + persistedBindings.keySet());
+                    if (log.isDebugEnabled()) {
+                        log.debug("[evaluateRemote] Found " + persistedBindings.size() +
+                                " persisted bindings: " + persistedBindings.keySet());
+                    }
                     // Log each binding value for debugging.
                     for (Map.Entry<String, Object> entry : persistedBindings.entrySet()) {
-                        log.info("[evaluateRemote] Binding: " + entry.getKey() + " = " +
-                                (entry.getValue() != null
-                                        ? entry.getValue().getClass().getSimpleName() + ": " + entry.getValue()
-                                        : "null"));
+                        if (log.isDebugEnabled()) {
+                            log.debug("[evaluateRemote] Binding: " + entry.getKey() + " = " +
+                                    (entry.getValue() != null
+                                            ? entry.getValue().getClass().getSimpleName() + ": " + entry.getValue()
+                                            : "null"));
+                        }
                     }
                 } else {
-                    log.info("[evaluateRemote] No persisted bindings found in authContext. " +
-                            "Property keys: " + authenticationContext.getProperties().keySet());
+                    if (log.isDebugEnabled()) {
+                        log.debug("[evaluateRemote] No persisted bindings found in authContext. " +
+                                "Property keys: " + authenticationContext.getProperties().keySet());
+                    }
                     persistedBindings = new HashMap<>();
                 }
 
@@ -1058,8 +1102,10 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                         // (e.g., dynamicFlag set in step 1 callback is available in step 2)
                         Map<String, Object> updatedBindings = jsEngine.getBindings();
                         authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", updatedBindings);
-                        log.info("[evaluateRemote] Re-persisted " + updatedBindings.size() +
-                                " bindings after callback");
+                        if (log.isDebugEnabled()) {
+                            log.debug("[evaluateRemote] Re-persisted " + updatedBindings.size() +
+                                    " bindings after callback");
+                        }
 
                         if (log.isDebugEnabled()) {
                             log.debug("Remote JS execution succeeded for SP: " +
@@ -1099,8 +1145,10 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     AuthGraphNode accumulated = ((RemoteJsEngine) jsEngine).getAccumulatedDynamicBaseNode();
                     if (accumulated != null) {
                         dynamicallyBuiltBaseNode.set(accumulated);
-                        log.info("[evaluateRemote] Propagated accumulated dynamicBaseNode to main thread: " +
-                                accumulated.getClass().getSimpleName());
+                        if (log.isDebugEnabled()) {
+                            log.debug("[evaluateRemote] Propagated accumulated dynamicBaseNode to main thread: " +
+                                    accumulated.getClass().getSimpleName());
+                        }
                     }
                 }
 

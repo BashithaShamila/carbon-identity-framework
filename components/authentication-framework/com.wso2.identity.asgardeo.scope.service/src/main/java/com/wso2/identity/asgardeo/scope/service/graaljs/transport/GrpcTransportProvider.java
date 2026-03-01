@@ -46,10 +46,16 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
     @Override
     public RemoteEngineTransport createTransport(TransportConfig config) {
         transportInstanceCount++;
-        log.info("[GrpcTransportProvider] ========== createTransport() CALLED ==========");
-        log.info("[GrpcTransportProvider] Transport instance #" + transportInstanceCount);
-        log.info("[GrpcTransportProvider] Config details - grpcTarget: " + config.getGrpcTarget() +
-                ", callbackPort: " + config.getCallbackPort());
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcTransportProvider] ========== createTransport() CALLED ==========");
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcTransportProvider] Transport instance #" + transportInstanceCount);
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcTransportProvider] Config details - grpcTarget: " + config.getGrpcTarget() +
+                    ", callbackPort: " + config.getCallbackPort());
+        }
 
         String grpcTarget = config.getGrpcTarget();
         if (grpcTarget == null || grpcTarget.isEmpty()) {
@@ -59,17 +65,25 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
 
         // Use singleton streaming transport (implements both transport and callback server)
         GrpcStreamingTransportImpl instance = getOrCreateStreamingInstance(grpcTarget);
-        log.info("[GrpcTransportProvider] Returning streaming transport, hashCode=" +
-                System.identityHashCode(instance));
-        log.info("[GrpcTransportProvider] ========== createTransport() COMPLETED ==========");
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcTransportProvider] Returning streaming transport, hashCode=" +
+                    System.identityHashCode(instance));
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcTransportProvider] ========== createTransport() COMPLETED ==========");
+        }
         return instance;
     }
 
     @Override
     public CallbackServer createCallbackServer(TransportConfig config) {
-        log.info("[GrpcTransportProvider] ========== createCallbackServer() CALLED ==========");
-        log.info("[GrpcTransportProvider] Config details - callbackPort: " + config.getCallbackPort() +
-                ", grpcTarget: " + config.getGrpcTarget());
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcTransportProvider] ========== createCallbackServer() CALLED ==========");
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcTransportProvider] Config details - callbackPort: " + config.getCallbackPort() +
+                    ", grpcTarget: " + config.getGrpcTarget());
+        }
 
         String grpcTarget = config.getGrpcTarget();
         if (grpcTarget == null || grpcTarget.isEmpty()) {
@@ -79,9 +93,13 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
 
         // Return same streaming transport instance (it implements CallbackServer too)
         GrpcStreamingTransportImpl instance = getOrCreateStreamingInstance(grpcTarget);
-        log.info("[GrpcTransportProvider] Returning streaming transport as callback server, hashCode=" +
-                System.identityHashCode(instance));
-        log.info("[GrpcTransportProvider] ========== createCallbackServer() COMPLETED ==========");
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcTransportProvider] Returning streaming transport as callback server, hashCode=" +
+                    System.identityHashCode(instance));
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("[GrpcTransportProvider] ========== createCallbackServer() COMPLETED ==========");
+        }
         return instance;
     }
 
@@ -89,11 +107,15 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
         if (streamingInstance == null) {
             synchronized (lock) {
                 if (streamingInstance == null) {
-                    log.info("[GrpcTransportProvider] Creating NEW GrpcStreamingTransportImpl for target: " +
-                            grpcTarget);
+                    if (log.isDebugEnabled()) {
+                        log.debug("[GrpcTransportProvider] Creating NEW GrpcStreamingTransportImpl for target: " +
+                                grpcTarget);
+                    }
                     streamingInstance = new GrpcStreamingTransportImpl(grpcTarget);
-                    log.info("[GrpcTransportProvider] NEW singleton created, hashCode=" +
-                            System.identityHashCode(streamingInstance));
+                    if (log.isDebugEnabled()) {
+                        log.debug("[GrpcTransportProvider] NEW singleton created, hashCode=" +
+                                System.identityHashCode(streamingInstance));
+                    }
                 }
             }
         }

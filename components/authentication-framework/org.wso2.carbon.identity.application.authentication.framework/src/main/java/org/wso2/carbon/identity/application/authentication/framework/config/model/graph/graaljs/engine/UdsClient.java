@@ -99,7 +99,9 @@ public class UdsClient implements Closeable {
     public EvaluateResponse sendEvaluate(EvaluateRequest request) throws IOException {
         ensureConnected();
 
-        log.info("[UdsClient] EvaluateRequest: " + request);
+        if (log.isDebugEnabled()) {
+            log.debug("[UdsClient] EvaluateRequest: " + request);
+        }
 
 
         // Write request (length-prefixed)
@@ -110,7 +112,9 @@ public class UdsClient implements Closeable {
         byte[] responseBytes = readMessage();
         EvaluateResponse response = EvaluateResponse.parseFrom(responseBytes);
 
-        log.info("[UdsClient] EvaluateResponse: " + response);
+        if (log.isDebugEnabled()) {
+            log.debug("[UdsClient] EvaluateResponse: " + response);
+        }
 
         return response;
     }
@@ -126,7 +130,9 @@ public class UdsClient implements Closeable {
         ensureConnected();
 
 
-        log.info("[UdsClient] ExecuteCallbackRequest: " + request);
+        if (log.isDebugEnabled()) {
+            log.debug("[UdsClient] ExecuteCallbackRequest: " + request);
+        }
 
         // Write request (length-prefixed)
         byte[] requestBytes = request.toByteArray();
@@ -136,7 +142,9 @@ public class UdsClient implements Closeable {
         byte[] responseBytes = readMessage();
         ExecuteCallbackResponse response = ExecuteCallbackResponse.parseFrom(responseBytes);
 
-        log.info("[UdsClient] ExecuteCallbackResponse: " + response);
+        if (log.isDebugEnabled()) {
+            log.debug("[UdsClient] ExecuteCallbackResponse: " + response);
+        }
 
         return response;
     }
