@@ -27,6 +27,7 @@ import org.apache.commons.logging.LogFactory;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Singleton manager for gRPC client channels and callback server.
@@ -45,8 +46,10 @@ public class GrpcConnectionManager {
     private static volatile GrpcConnectionManager instance;
     private static final Object lock = new Object();
 
-    // Client channel for requests to remote JS engine
-    private ManagedChannel clientChannel;
+    // Client channel pool for requests to remote JS engine
+    private ManagedChannel[] channelPool;
+    private final AtomicInteger channelIndex = new AtomicInteger(0);
+    private int channelPoolSize = 4; // default pool size, configurable via graaljs.grpc.channel.pool.size
     private String grpcTarget;
     private int channelIdleTimeout = 180; // seconds
 
@@ -88,23 +91,30 @@ public class GrpcConnectionManager {
     public synchronized ManagedChannel getClientChannel(String target) {
         if (this.grpcTarget == null || !this.grpcTarget.equals(target)) {
             // Target changed or first initialization
-            if (clientChannel != null) {
-                log.info("[GrpcConnectionManager] Target changed, shutting down old channel");
+            if (channelPool != null) {
+                log.info("[GrpcConnectionManager] Target changed, shutting down old channel pool");
                 shutdownClientChannel();
             }
             this.grpcTarget = target;
         }
 
-        if (clientChannel == null || clientChannel.isShutdown() || clientChannel.isTerminated()) {
-            log.info("[GrpcConnectionManager] Creating new gRPC client channel to: " + target);
-            clientChannel = ManagedChannelBuilder.forTarget(target)
-                    .usePlaintext() // For development - use TLS in production
-                    .idleTimeout(channelIdleTimeout, TimeUnit.SECONDS)
-                    .build();
-            log.info("[GrpcConnectionManager] gRPC client channel created successfully");
+        if (channelPool == null) {
+            log.info("[GrpcConnectionManager] Creating gRPC client channel pool of size " +
+                    channelPoolSize + " to: " + target);
+            channelPool = new ManagedChannel[channelPoolSize];
+            for (int i = 0; i < channelPoolSize; i++) {
+                channelPool[i] = ManagedChannelBuilder.forTarget(target)
+                        .usePlaintext() // For development - use TLS in production
+                        .idleTimeout(channelIdleTimeout, TimeUnit.SECONDS)
+                        .build();
+            }
+            log.info("[GrpcConnectionManager] gRPC client channel pool created successfully (" +
+                    channelPoolSize + " channels)");
         }
 
-        return clientChannel;
+        // Round-robin channel selection (mask sign bit to handle integer overflow)
+        int index = (channelIndex.getAndIncrement() & 0x7FFFFFFF) % channelPoolSize;
+        return channelPool[index];
     }
 
     /**
@@ -113,7 +123,15 @@ public class GrpcConnectionManager {
      * @return true if channel exists and not shutdown/terminated
      */
     public boolean isClientChannelConnected() {
-        return clientChannel != null && !clientChannel.isShutdown() && !clientChannel.isTerminated();
+        if (channelPool == null) {
+            return false;
+        }
+        for (ManagedChannel ch : channelPool) {
+            if (ch != null && !ch.isShutdown() && !ch.isTerminated()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -189,16 +207,23 @@ public class GrpcConnectionManager {
      * Shutdown the client channel gracefully.
      */
     public synchronized void shutdownClientChannel() {
-        if (clientChannel != null) {
-            log.info("[GrpcConnectionManager] Shutting down gRPC client channel");
-            try {
-                clientChannel.shutdown().awaitTermination(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                log.warn("[GrpcConnectionManager] Interrupted while shutting down client channel", e);
-                clientChannel.shutdownNow();
-                Thread.currentThread().interrupt();
+        if (channelPool != null) {
+            log.info("[GrpcConnectionManager] Shutting down gRPC client channel pool (" +
+                    channelPool.length + " channels)");
+            for (int i = 0; i < channelPool.length; i++) {
+                if (channelPool[i] != null) {
+                    try {
+                        channelPool[i].shutdown().awaitTermination(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        log.warn("[GrpcConnectionManager] Interrupted while shutting down channel " +
+                                i, e);
+                        channelPool[i].shutdownNow();
+                        Thread.currentThread().interrupt();
+                    }
+                }
             }
-            clientChannel = null;
+            channelPool = null;
+            channelIndex.set(0);
         }
     }
 
@@ -246,6 +271,18 @@ public class GrpcConnectionManager {
             }
         }
 
+        String poolSizeStr = System.getProperty("graaljs.grpc.channel.pool.size");
+        if (poolSizeStr != null) {
+            try {
+                int size = Integer.parseInt(poolSizeStr);
+                if (size > 0) {
+                    channelPoolSize = size;
+                }
+            } catch (NumberFormatException e) {
+                log.warn("[GrpcConnectionManager] Invalid channel pool size value: " + poolSizeStr);
+            }
+        }
+
         String callbackPortStr = System.getProperty("graaljs.grpc.callback.port");
         if (callbackPortStr != null) {
             try {
@@ -255,8 +292,8 @@ public class GrpcConnectionManager {
             }
         }
 
-        log.info("[GrpcConnectionManager] Configuration loaded - IdleTimeout: " + channelIdleTimeout +
-                "s, CallbackPort: " + callbackPort);
+        log.info("[GrpcConnectionManager] Configuration loaded - ChannelPoolSize: " + channelPoolSize +
+                ", IdleTimeout: " + channelIdleTimeout + "s, CallbackPort: " + callbackPort);
     }
 
     /**
@@ -275,5 +312,26 @@ public class GrpcConnectionManager {
      */
     public void setCallbackPort(int port) {
         this.callbackPort = port;
+    }
+
+    /**
+     * Set channel pool size (for testing/configuration).
+     * Must be called before getClientChannel() to take effect.
+     *
+     * @param size Pool size (must be greater than 0)
+     */
+    public void setChannelPoolSize(int size) {
+        if (size > 0) {
+            this.channelPoolSize = size;
+        }
+    }
+
+    /**
+     * Get the current channel pool size.
+     *
+     * @return Pool size
+     */
+    public int getChannelPoolSize() {
+        return channelPoolSize;
     }
 }

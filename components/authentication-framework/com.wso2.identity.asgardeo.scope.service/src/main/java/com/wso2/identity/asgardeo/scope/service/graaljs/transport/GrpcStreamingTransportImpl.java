@@ -80,8 +80,6 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     private final Map<String, HostFunctionHandler> sessionHandlers = new ConcurrentHashMap<>();
     private final ExecutorService callbackExecutor = Executors.newCachedThreadPool();
 
-    private JsEngineStreamingServiceGrpc.JsEngineStreamingServiceStub asyncStub;
-
     public GrpcStreamingTransportImpl(String grpcTarget) {
         this(grpcTarget, 5);
     }
@@ -110,13 +108,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                     ", script length: " + request.getScript().length());
         }
 
-        ensureStub();
+        JsEngineStreamingServiceGrpc.JsEngineStreamingServiceStub stub = getStub();
 
         CompletableFuture<EvaluateResponse> evalFuture = new CompletableFuture<>();
         final Object lock = new Object();
 
         long t1 = System.currentTimeMillis();
-        StreamObserver<StreamMessage> outboundStream = asyncStub.executeScript(
+        StreamObserver<StreamMessage> outboundStream = stub.executeScript(
                 createResponseObserver(sessionId, evalFuture, null, lock, t0));
         long t2 = System.currentTimeMillis();
         System.out.println("[PERF] [" + t2 + "] IS STREAM_OPENED session=" + sessionId +
@@ -193,13 +191,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                     ", function length: " + request.getFunctionSource().length());
         }
 
-        ensureStub();
+        JsEngineStreamingServiceGrpc.JsEngineStreamingServiceStub stub = getStub();
 
         CompletableFuture<ExecuteCallbackResponse> callbackFuture = new CompletableFuture<>();
         final Object lock = new Object();
 
         long t1 = System.currentTimeMillis();
-        StreamObserver<StreamMessage> outboundStream = asyncStub.executeScript(
+        StreamObserver<StreamMessage> outboundStream = stub.executeScript(
                 createResponseObserver(sessionId, null, callbackFuture, lock, t0));
         long t2 = System.currentTimeMillis();
         System.out.println("[PERF] [" + t2 + "] IS EXEC_CALLBACK_STREAM_OPENED session=" + sessionId +
@@ -270,7 +268,8 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         if (log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] connect() to " + grpcTarget);
         }
-        ensureStub();
+        // Verify channel pool is initialized by requesting a channel
+        connectionManager.getClientChannel(grpcTarget);
         if (log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] Connected successfully to: " + grpcTarget);
         }
@@ -278,18 +277,16 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
     @Override
     public boolean isConnected() {
-        boolean channelOk = connectionManager.isClientChannelConnected();
-        boolean stubOk = asyncStub != null;
-        return channelOk && stubOk;
+        return connectionManager.isClientChannelConnected();
     }
 
     @Override
     public void close() throws IOException {
         if (log.isDebugEnabled()) {
-            log.debug("[GrpcStreaming] close() called - singleton transport, stub remains active, " +
+            log.debug("[GrpcStreaming] close() called - singleton transport, channel pool remains active, " +
                     "correlationId: " + correlationId);
         }
-        // Don't null out asyncStub - this is a singleton transport shared across all sessions.
+        // Don't shutdown channel pool - this is a singleton transport shared across all sessions.
         // Per-session cleanup is handled by unregisterHandler() and stream onCompleted() in finally.
     }
 
@@ -732,14 +729,15 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         }
     }
 
-    private void ensureStub() {
-        if (asyncStub == null) {
-            ManagedChannel channel = connectionManager.getClientChannel(grpcTarget);
-            asyncStub = JsEngineStreamingServiceGrpc.newStub(channel);
-            if (log.isDebugEnabled()) {
-                log.debug("[GrpcStreaming] Created async stub for target: " + grpcTarget);
-            }
-        }
+    /**
+     * Get a stub for a round-robin selected channel from the pool.
+     * Stubs are lightweight wrappers, so creating one per-request is cheap.
+     * This distributes streams across multiple TCP connections, avoiding
+     * HTTP/2 flow control contention and head-of-line blocking.
+     */
+    private JsEngineStreamingServiceGrpc.JsEngineStreamingServiceStub getStub() {
+        ManagedChannel channel = connectionManager.getClientChannel(grpcTarget);
+        return JsEngineStreamingServiceGrpc.newStub(channel);
     }
 
     private boolean isProxyType(Object value) {
