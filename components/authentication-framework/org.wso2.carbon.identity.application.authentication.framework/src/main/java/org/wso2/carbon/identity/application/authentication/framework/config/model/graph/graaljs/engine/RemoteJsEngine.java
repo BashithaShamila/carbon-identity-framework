@@ -40,7 +40,9 @@ import org.wso2.carbon.identity.application.authentication.framework.model.Authe
 import org.graalvm.polyglot.Value;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -73,6 +75,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     private final Map<String, Object> hostFunctions = new ConcurrentHashMap<>();
     private final Map<String, Object> hostFunctionRefs = new ConcurrentHashMap<>();
     private JsGraphBuilder graphBuilder;
+    // Session-scoped cache for proxied objects (e.g., User objects from getUsersWithClaimValues)
+    // Key: reference_id (UUID), Value: actual object
+    private final Map<String, Object> proxyObjectCache = new ConcurrentHashMap<>();
     // Accumulated dynamicallyBuiltBaseNode across gRPC callbacks.
     // In local mode, the dynamicallyBuiltBaseNode ThreadLocal accumulates nodes
     // across
@@ -98,6 +103,8 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             AuthenticationContext authContext) {
         this.transport = transport;
         this.callbackServer = callbackServer;
+        // Note: Proxy cache ThreadLocal is set per-thread in HostCallbackServer/GrpcStreamingTransportImpl
+        // before serialization, not here in constructor (different thread context)
         this.authContext = authContext;
         this.sessionId = UUID.randomUUID().toString();
         if (log.isDebugEnabled()) {
@@ -692,6 +699,12 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     public Object getContextProperty(String propertyPath) throws Exception {
         log.debug("[RemoteJsEngine] getContextProperty called: " + propertyPath + ", session: " + sessionId);
 
+        // Handle proxy object property access: "__proxyref__::<referenceId>::<property>"
+        // This enables lazy loading of complex objects (e.g., User objects from getUsersWithClaimValues)
+        if (propertyPath.startsWith("__proxyref__::")) {
+            return getProxyObjectProperty(propertyPath.substring("__proxyref__::".length()));
+        }
+
         // Handle host function return references: "__hostref__::<refId>::<property>"
         if (propertyPath.startsWith("__hostref__::")) {
             return getHostRefProperty(propertyPath.substring("__hostref__::".length()));
@@ -822,6 +835,95 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
         log.debug("[RemoteJsEngine] getHostRefProperty '" + path + "' = " +
                 (current != null ? current.getClass().getSimpleName() : "null"));
+        return current;
+    }
+
+    /**
+     * Get a property from a cached proxy object.
+     * Path format: "<referenceId>::<property>" or "<referenceId>::<property>::<nestedProperty>..."
+     * Example: "abc-123::username" -> retrieves username from cached object with ID abc-123
+     *
+     * This enables lazy loading of complex objects. Instead of eagerly serializing all
+     * properties (which causes timeouts for large result sets like getUsersWithClaimValues),
+     * objects are cached and properties are fetched on-demand when accessed.
+     */
+    private Object getProxyObjectProperty(String path) {
+        String[] parts = path.split("::");
+        String refId = parts[0];
+        Object current = proxyObjectCache.get(refId);
+
+        if (current == null) {
+            log.warn("[RemoteJsEngine] No proxy object found for reference ID: " + refId);
+            return null;
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] Retrieved proxy object for refId: " + refId +
+                    ", type: " + current.getClass().getName());
+        }
+
+        // Navigate remaining parts (skip refId at index 0)
+        for (int i = 1; i < parts.length; i++) {
+            String part = parts[i];
+            if (current == null) {
+                return null;
+            }
+
+            if ("__keys__".equals(part)) {
+                if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                    return ((org.graalvm.polyglot.proxy.ProxyObject) current).getMemberKeys();
+                }
+                // For POJOs, return list of property names
+                try {
+                    List<String> keys = new ArrayList<>();
+                    for (java.lang.reflect.Method m : current.getClass().getMethods()) {
+                        if (m.getParameterCount() == 0 && m.getName().startsWith("get") &&
+                                !"getClass".equals(m.getName())) {
+                            String prop = Character.toLowerCase(m.getName().charAt(3)) +
+                                    m.getName().substring(4);
+                            keys.add(prop);
+                        }
+                    }
+                    return keys;
+                } catch (Exception e) {
+                    log.debug("[RemoteJsEngine] Error getting keys for proxy object: " + e.getMessage());
+                    return null;
+                }
+            }
+
+            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(Integer.parseInt(part));
+            } else if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+                current = map.get(part);
+            } else {
+                // Use reflection to access the property (e.g., getUsername() for "username")
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = current.getClass().getMethod(getterName);
+                    current = getter.invoke(current);
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Accessed property '" + part + "' via " + getterName +
+                                " -> " + (current != null ? current.getClass().getSimpleName() : "null"));
+                    }
+                } catch (NoSuchMethodException | IllegalAccessException
+                        | java.lang.reflect.InvocationTargetException e) {
+                    log.debug("[RemoteJsEngine] No getter for proxy object property: " + part +
+                            " on class: " + current.getClass().getName());
+                    return null;
+                }
+            }
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] getProxyObjectProperty '" + path + "' = " +
+                    (current != null ? current.getClass().getSimpleName() : "null"));
+        }
         return current;
     }
 
@@ -1290,6 +1392,14 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     " (from " + (args.length - fixedParamCount) + " raw args)");
         }
         return adaptedArgs;
+    }
+
+    /**
+     * Get the proxy object cache for this session.
+     * Used by HostCallbackServer to set the ThreadLocal before serialization.
+     */
+    public Map<String, Object> getProxyObjectCache() {
+        return proxyObjectCache;
     }
 
     /**

@@ -43,8 +43,83 @@ public class ProtobufSerializer {
 
     private static final Log log = LogFactory.getLog(ProtobufSerializer.class);
 
+    // Thread-local session proxy cache for storing complex objects
+    // This is set per-session by RemoteJsEngine and used during serialization
+    private static final ThreadLocal<Map<String, Object>> sessionProxyCache = new ThreadLocal<>();
+
     private ProtobufSerializer() {
         // Utility class
+    }
+
+    /**
+     * Set the session proxy cache for the current thread.
+     * This should be called by RemoteJsEngine before serialization.
+     *
+     * @param cache The proxy object cache for this session.
+     */
+    public static void setSessionProxyCache(Map<String, Object> cache) {
+        sessionProxyCache.set(cache);
+    }
+
+    /**
+     * Clear the session proxy cache for the current thread.
+     */
+    public static void clearSessionProxyCache() {
+        sessionProxyCache.remove();
+    }
+
+    /**
+     * Get the session proxy cache for the current thread.
+     *
+     * @return The proxy cache, or null if not set.
+     */
+    private static Map<String, Object> getSessionProxyCache() {
+        return sessionProxyCache.get();
+    }
+
+    /**
+     * Check if an object should use the proxy pattern instead of eager serialization.
+     * Proxy pattern is used for complex POJOs that might have expensive getter operations.
+     *
+     * @param obj The object to check.
+     * @return true if proxy pattern should be used, false otherwise.
+     */
+    private static boolean shouldUseProxyPattern(Object obj) {
+        if (obj == null) {
+            return false;
+        }
+
+        Class<?> clazz = obj.getClass();
+        String className = clazz.getName();
+
+        // Use proxy for domain objects that might have expensive operations
+        // Common patterns: User, AuthenticatedUser, custom domain objects
+        boolean matchesClassName = className.contains(".User") ||
+                className.contains(".user.") ||
+                className.contains(".model.") ||
+                className.contains(".domain.");
+
+        if (matchesClassName) {
+            System.out.println("[ProtobufSerializer] shouldUseProxyPattern: " + className +
+                    " - matches class pattern = true");
+            return true;
+        }
+
+        // Use proxy for objects with many getters (likely complex domain objects)
+        int getterCount = 0;
+        for (java.lang.reflect.Method m : clazz.getMethods()) {
+            if (m.getParameterCount() == 0 && m.getName().startsWith("get") &&
+                    !"getClass".equals(m.getName())) {
+                getterCount++;
+            }
+        }
+
+        boolean hasEnoughGetters = getterCount > 3;
+        System.out.println("[ProtobufSerializer] shouldUseProxyPattern: " + className +
+                " - getterCount=" + getterCount + " > 3? " + hasEnoughGetters);
+
+        // If object has more than 3 getters, it's likely complex enough for proxy
+        return hasEnoughGetters;
     }
 
     /**
@@ -130,8 +205,12 @@ public class ProtobufSerializer {
         if (serializable instanceof List) {
             @SuppressWarnings("unchecked")
             List<Object> listValue = (List<Object>) serializable;
+            System.out.println("[ProtobufSerializer] Serializing List with " + listValue.size() + " elements");
             SerializedArray.Builder arrayBuilder = SerializedArray.newBuilder();
-            for (Object element : listValue) {
+            for (int i = 0; i < listValue.size(); i++) {
+                Object element = listValue.get(i);
+                System.out.println("[ProtobufSerializer] List element[" + i + "] type: " +
+                        (element != null ? element.getClass().getName() : "null"));
                 arrayBuilder.addElements(toProto(element));
             }
             return SerializedValue.newBuilder()
@@ -186,6 +265,70 @@ public class ProtobufSerializer {
             if (wrapped instanceof Map) {
                 return toProto(wrapped);
             }
+        }
+
+        // Generic POJO handling: Use LAZY PROXY pattern instead of eager introspection.
+        // This is CRITICAL for arrays of complex objects (e.g., getUsersWithClaimValues
+        // returning 100 User objects). Eagerly introspecting all getters triggers
+        // expensive operations (database calls) and causes timeouts.
+        //
+        // Instead, we create a proxy marker and cache the object. When the sidecar
+        // accesses a property (e.g., users[i].username), it sends a callback to fetch
+        // only that property on-demand.
+        Map<String, Object> cache = getSessionProxyCache();
+        boolean shouldProxy = shouldUseProxyPattern(serializable);
+        System.out.println("[ProtobufSerializer] POJO check for " + serializable.getClass().getName() +
+                " - cache=" + (cache != null ? "available" : "NULL") +
+                " shouldProxy=" + shouldProxy);
+
+        if (cache != null && shouldProxy) {
+            // Create a unique reference ID for this object
+            String referenceId = java.util.UUID.randomUUID().toString();
+
+            // Store the actual object in the session cache
+            cache.put(referenceId, serializable);
+
+            System.out.println("[ProtobufSerializer] ✓ Created proxy marker for " +
+                    serializable.getClass().getName() + " with referenceId: " + referenceId);
+            if (log.isDebugEnabled()) {
+                log.debug("Created proxy marker for " + serializable.getClass().getName() +
+                        " with referenceId: " + referenceId);
+            }
+
+            // Return a proxy marker instead of eagerly serializing all properties
+            return SerializedValue.newBuilder()
+                    .setProxyObject(SerializedProxyObject.newBuilder()
+                            .setType("pojo")
+                            .setReferenceId(referenceId)
+                            .build())
+                    .build();
+        }
+
+        // Fallback: If no cache is set (old behavior), use bean introspection
+        // This path should rarely be taken in remote execution mode
+        try {
+            Map<String, Object> beanMap = new HashMap<>();
+            for (java.lang.reflect.Method m : serializable.getClass().getMethods()) {
+                if (m.getParameterCount() == 0 && m.getName().startsWith("get") &&
+                        !"getClass".equals(m.getName())) {
+                    String prop = Character.toLowerCase(m.getName().charAt(3)) +
+                            m.getName().substring(4);
+                    try {
+                        Object propVal = m.invoke(serializable);
+                        beanMap.put(prop, propVal);
+                    } catch (Exception e) {
+                        // ignore inaccessible property
+                    }
+                }
+            }
+            if (!beanMap.isEmpty()) {
+                log.warn("FALLBACK: Serialized POJO via eager bean introspection (no proxy cache available): " +
+                        serializable.getClass().getName() + " -> " + beanMap.size() + " properties");
+                return toProto(beanMap);
+            }
+        } catch (Exception e) {
+            log.debug("POJO introspection failed for " +
+                    serializable.getClass().getName() + ": " + e.getMessage());
         }
 
         // Fallback: convert to string

@@ -326,7 +326,24 @@ public class HostCallbackServer implements Closeable {
                 // Complex object: store reference and return as SerializedProxyObject
                 serializedResult = serializeAsProxyObject(result, handler);
             } else {
-                serializedResult = ProtobufSerializer.toProto(result);
+                // CRITICAL FIX: Set proxy cache ThreadLocal before serialization
+                // This enables lazy-loading proxy pattern for complex objects (e.g., User arrays)
+                if (handler instanceof org.wso2.carbon.identity.application.authentication.framework
+                        .config.model.graph.graaljs.engine.RemoteJsEngine) {
+                    org.wso2.carbon.identity.application.authentication.framework
+                            .config.model.graph.graaljs.engine.RemoteJsEngine remoteEngine =
+                            (org.wso2.carbon.identity.application.authentication.framework
+                                    .config.model.graph.graaljs.engine.RemoteJsEngine) handler;
+                    java.util.Map<String, Object> proxyCache = remoteEngine.getProxyObjectCache();
+                    System.out.println("[HostCallbackServer] Setting proxy cache ThreadLocal - cache size: " +
+                            (proxyCache != null ? proxyCache.size() : "NULL"));
+                    ProtobufSerializer.setSessionProxyCache(proxyCache);
+                }
+                try {
+                    serializedResult = ProtobufSerializer.toProto(result);
+                } finally {
+                    ProtobufSerializer.clearSessionProxyCache();
+                }
             }
 
             return HostFunctionResponse.newBuilder()
