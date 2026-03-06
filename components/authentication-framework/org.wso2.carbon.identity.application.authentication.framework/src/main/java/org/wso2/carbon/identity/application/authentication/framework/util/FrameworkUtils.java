@@ -4111,9 +4111,22 @@ public class FrameworkUtils {
                                                                               String tenantDomain) {
 
         ResolvedUserResult resolvedUserResult = new ResolvedUserResult(ResolvedUserResult.UserResolvedStatus.FAIL);
-        if (FrameworkServiceDataHolder.getInstance().getMultiAttributeLoginService().isEnabled(tenantDomain)) {
+        boolean isEnabled = FrameworkServiceDataHolder.getInstance().getMultiAttributeLoginService()
+                .isEnabled(tenantDomain);
+        System.out.println("[FrameworkUtils] processMultiAttributeLoginIdentification: loginIdentifier=" +
+                loginIdentifier + ", tenantDomain=" + tenantDomain + ", isEnabled=" + isEnabled);
+        System.out.println("[FrameworkUtils] CarbonContext: tenantDomain=" +
+                PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain() +
+                ", tenantId=" +
+                PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantId());
+        if (isEnabled) {
             resolvedUserResult = FrameworkServiceDataHolder.getInstance().getMultiAttributeLoginService().
                     resolveUser(loginIdentifier, tenantDomain);
+            System.out.println("[FrameworkUtils] resolveUser result: status=" +
+                    (resolvedUserResult != null ? resolvedUserResult.getResolvedStatus() : "null") +
+                    ", user=" + (resolvedUserResult != null && resolvedUserResult.getUser() != null ?
+                    resolvedUserResult.getUser().getPreferredUsername() : "null") +
+                    ", errorMsg=" + (resolvedUserResult != null ? resolvedUserResult.getErrorMessage() : "null"));
         }
         return resolvedUserResult;
     }
