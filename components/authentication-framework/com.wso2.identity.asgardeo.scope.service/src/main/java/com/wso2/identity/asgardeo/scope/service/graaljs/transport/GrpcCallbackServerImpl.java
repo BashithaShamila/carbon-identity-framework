@@ -18,6 +18,23 @@
 
 package com.wso2.identity.asgardeo.scope.service.graaljs.transport;
 
+// ============================================================================
+// STALE CODE - OLD UNIDIRECTIONAL 2-CHANNEL gRPC APPROACH
+// ============================================================================
+// This class ran a SEPARATE gRPC server (port 50052) to receive host function
+// callbacks from the sidecar via unary RPCs (HostCallbackService).
+//
+// In the old approach:
+//   IS → Sidecar: unary RPCs on port 50051 (via GrpcTransportImpl)
+//   Sidecar → IS: unary RPCs on port 50052 (via this GrpcCallbackServerImpl)
+//
+// Replaced by: GrpcStreamingTransportImpl which handles callbacks inline on
+// the same bidirectional stream (port 50051 only, no separate callback server).
+//
+// TODO: Remove entirely during transport layer refactoring.
+// ============================================================================
+
+/*
 import io.grpc.Server;
 import io.grpc.stub.StreamObserver;
 import org.apache.commons.logging.Log;
@@ -39,17 +56,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * gRPC implementation of CallbackServer.
- * <p>
- * Runs a gRPC server that receives host function invocations from the remote JavaScript engine.
- * Uses the HostCallbackServiceGrpc service definition to handle three types of callbacks:
- * - invokeHostFunction: Execute host functions (executeStep, sendError, etc.)
- * - getContextProperty: Get context property values for dynamic proxy
- * - setContextProperty: Set context property values (write-back)
- * <p>
- * This implementation is thread-safe and supports multiple concurrent sessions.
- */
 public class GrpcCallbackServerImpl implements CallbackServer {
 
     private static final Log log = LogFactory.getLog(GrpcCallbackServerImpl.class);
@@ -60,19 +66,10 @@ public class GrpcCallbackServerImpl implements CallbackServer {
     private Server server;
     private int port;
 
-    /**
-     * Create a new gRPC callback server.
-     * Uses default port from GrpcConnectionManager.
-     */
     public GrpcCallbackServerImpl() {
         this(GrpcConnectionManager.getInstance().getCallbackPort());
     }
 
-    /**
-     * Create a new gRPC callback server with specific port.
-     *
-     * @param port Port to bind (0 for automatic port selection)
-     */
     public GrpcCallbackServerImpl(int port) {
         log.info("[GrpcCallbackServerImpl] ========== CONSTRUCTOR ==========");
         log.info("[GrpcCallbackServerImpl] Creating callback server with port: " + port);
@@ -132,7 +129,7 @@ public class GrpcCallbackServerImpl implements CallbackServer {
         if (!connectionManager.isCallbackServerStarted()) {
             log.info("[GrpcCallbackServerImpl] Starting NEW gRPC callback server on port: " + port);
             server = connectionManager.getCallbackServer(serviceImpl, port);
-            port = server.getPort(); // Update with actual port if 0 was used
+            port = server.getPort();
             log.info("[GrpcCallbackServerImpl] gRPC callback server started successfully!");
             log.info("[GrpcCallbackServerImpl] Actual port: " + port);
             log.info("[GrpcCallbackServerImpl] Callback address: " + getCallbackAddress());
@@ -148,15 +145,9 @@ public class GrpcCallbackServerImpl implements CallbackServer {
         log.info("[GrpcCallbackServerImpl] ========== close() ==========");
         log.info("[GrpcCallbackServerImpl] Close called - server lifecycle managed by GrpcConnectionManager");
         log.info("[GrpcCallbackServerImpl] Current registered sessions: " + sessionHandlers.keySet());
-        // Note: We don't close the shared server here - it's managed by GrpcConnectionManager
-        // This allows multiple RemoteJsEngine instances to share the same callback server
         log.info("[GrpcCallbackServerImpl] ========== close() COMPLETED ==========");
     }
 
-    /**
-     * gRPC service implementation for host callbacks.
-     * Implements the HostCallbackService gRPC service.
-     */
     private class HostCallbackServiceImpl extends HostCallbackServiceGrpc.HostCallbackServiceImplBase {
 
         @Override
@@ -175,7 +166,6 @@ public class GrpcCallbackServerImpl implements CallbackServer {
             log.info("[GrpcCallbackServer] Currently registered sessions: " + sessionHandlers.keySet());
             log.info("[GrpcCallbackServer] Session count: " + sessionHandlers.size());
 
-            // Log each argument
             for (int i = 0; i < request.getArgumentsCount(); i++) {
                 SerializedValue sv = request.getArguments(i);
                 log.info("[GrpcCallbackServer] Argument[" + i + "] valueCase: " + sv.getValueCase());
@@ -187,7 +177,6 @@ public class GrpcCallbackServerImpl implements CallbackServer {
             }
 
             try {
-                // Get handler for session
                 log.info("[GrpcCallbackServer] Looking up handler for session: " + sessionId);
                 HostFunctionHandler handler = sessionHandlers.get(sessionId);
 
@@ -210,7 +199,6 @@ public class GrpcCallbackServerImpl implements CallbackServer {
                 log.info("[GrpcCallbackServer] Handler FOUND for session: " + sessionId);
                 log.info("[GrpcCallbackServer] Handler type: " + handler.getClass().getName());
 
-                // Deserialize arguments
                 log.info("[GrpcCallbackServer] Deserializing " + request.getArgumentsCount() + " arguments...");
                 List<Object> args = new ArrayList<>();
                 for (int i = 0; i < request.getArgumentsCount(); i++) {
@@ -221,14 +209,12 @@ public class GrpcCallbackServerImpl implements CallbackServer {
                             (deserializedArg != null ? deserializedArg.getClass().getSimpleName() : "null"));
                 }
 
-                // Invoke handler
                 log.info("[GrpcCallbackServer] >>> Invoking handler." + functionName +
                         "() with " + args.size() + " args");
                 Object result = handler.invokeHostFunction(functionName, args.toArray());
                 log.info("[GrpcCallbackServer] <<< Handler returned: " +
                         (result != null ? result.getClass().getSimpleName() : "null"));
 
-                // Build response
                 log.info("[GrpcCallbackServer] Serializing result to proto...");
                 HostFunctionResponse response = HostFunctionResponse.newBuilder()
                         .setSuccess(true)
@@ -267,7 +253,6 @@ public class GrpcCallbackServerImpl implements CallbackServer {
             log.info("[GrpcCallbackServer] Currently registered sessions: " + sessionHandlers.keySet());
 
             try {
-                // Get handler for session
                 HostFunctionHandler handler = sessionHandlers.get(sessionId);
                 if (handler == null) {
                     String errorMsg = "No handler registered for session: " + sessionId;
@@ -284,17 +269,14 @@ public class GrpcCallbackServerImpl implements CallbackServer {
 
                 log.info("[GrpcCallbackServer] Handler found, getting property: " + propertyPath);
 
-                // Get property value
                 Object value = handler.getContextProperty(propertyPath);
                 log.info("[GrpcCallbackServer] Property value type: " +
                         (value != null ? value.getClass().getName() : "null"));
 
-                // Build response
                 ContextPropertyResponse.Builder responseBuilder = ContextPropertyResponse.newBuilder()
                         .setSuccess(true);
 
                 if (value != null) {
-                    // Check if value is a proxy type
                     boolean isProxy = isProxyType(value);
                     responseBuilder.setIsProxy(isProxy);
                     log.info("[GrpcCallbackServer] Value isProxy: " + isProxy);
@@ -304,7 +286,6 @@ public class GrpcCallbackServerImpl implements CallbackServer {
                         responseBuilder.setProxyType(valueProxyType);
                         log.info("[GrpcCallbackServer] Setting proxyType: " + valueProxyType);
 
-                        // Add member keys if available
                         if (value instanceof org.graalvm.polyglot.proxy.ProxyObject) {
                             Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) value).getMemberKeys();
                             if (keys instanceof String[]) {
@@ -351,7 +332,6 @@ public class GrpcCallbackServerImpl implements CallbackServer {
             log.info("[GrpcCallbackServer] Currently registered sessions: " + sessionHandlers.keySet());
 
             try {
-                // Get handler for session
                 HostFunctionHandler handler = sessionHandlers.get(sessionId);
                 if (handler == null) {
                     String errorMsg = "No handler registered for session: " + sessionId;
@@ -368,17 +348,14 @@ public class GrpcCallbackServerImpl implements CallbackServer {
 
                 log.info("[GrpcCallbackServer] Handler found, deserializing value...");
 
-                // Deserialize value
                 Object javaValue = ProtobufSerializer.fromProto(request.getValue());
                 log.info("[GrpcCallbackServer] Deserialized value type: " +
                         (javaValue != null ? javaValue.getClass().getSimpleName() : "null"));
 
-                // Set property
                 log.info("[GrpcCallbackServer] Setting property: " + propertyPath);
                 boolean success = handler.setContextProperty(propertyPath, javaValue);
                 log.info("[GrpcCallbackServer] Set property result: " + success);
 
-                // Build response
                 ContextPropertySetResponse response = ContextPropertySetResponse.newBuilder()
                         .setSuccess(success)
                         .build();
@@ -398,9 +375,6 @@ public class GrpcCallbackServerImpl implements CallbackServer {
             }
         }
 
-        /**
-         * Check if the value is a proxy type that needs nested access.
-         */
         private boolean isProxyType(Object value) {
             if (value == null) {
                 log.info("[GrpcCallbackServer] isProxyType: value is null, returning false");
@@ -417,9 +391,6 @@ public class GrpcCallbackServerImpl implements CallbackServer {
             return result;
         }
 
-        /**
-         * Get the proxy type name for a value.
-         */
         private String getProxyType(Object value) {
             String className = value.getClass().getSimpleName();
             String result;
@@ -435,3 +406,4 @@ public class GrpcCallbackServerImpl implements CallbackServer {
         }
     }
 }
+*/

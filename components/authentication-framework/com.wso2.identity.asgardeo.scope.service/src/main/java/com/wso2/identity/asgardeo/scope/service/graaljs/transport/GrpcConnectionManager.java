@@ -20,8 +20,9 @@ package com.wso2.identity.asgardeo.scope.service.graaljs.transport;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import io.grpc.Server;
-import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+// STALE IMPORT - OLD UNIDIRECTIONAL CALLBACK SERVER (kept for commented code below)
+// import io.grpc.Server;
+// import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -53,10 +54,14 @@ public class GrpcConnectionManager {
     private String grpcTarget;
     private int channelIdleTimeout = 180; // seconds
 
-    // Server for receiving callbacks
-    private Server callbackServer;
-    private int callbackPort = 50052; // default callback port
-    private volatile boolean callbackServerStarted = false;
+    // ========================================================================
+    // STALE FIELDS - OLD UNIDIRECTIONAL 2-CHANNEL CALLBACK SERVER
+    // No longer used. Bidirectional streaming handles callbacks inline.
+    // TODO: Remove during transport layer refactoring.
+    // ========================================================================
+    // private Server callbackServer;
+    // private int callbackPort = 50052;
+    // private volatile boolean callbackServerStarted = false;
 
     /**
      * Private constructor - use getInstance()
@@ -134,22 +139,21 @@ public class GrpcConnectionManager {
         return false;
     }
 
-    /**
-     * Get the callback server instance.
-     * Creates and starts the server if not already started.
-     *
-     * @param callbackServiceImpl The callback service implementation to register
-     * @param port Port to bind the server (0 for automatic port selection)
-     * @return Server instance
-     * @throws IOException if server startup fails
-     */
+    // ========================================================================
+    // STALE METHODS - OLD UNIDIRECTIONAL 2-CHANNEL CALLBACK SERVER
+    // These methods managed a separate gRPC server on port 50052 for receiving
+    // host function callbacks from the sidecar. No longer needed since
+    // GrpcStreamingTransportImpl handles callbacks on the same bidirectional stream.
+    // TODO: Remove during transport layer refactoring.
+    // ========================================================================
+
+    /*
     public synchronized Server getCallbackServer(io.grpc.BindableService callbackServiceImpl, int port)
             throws IOException {
         if (callbackServer == null || callbackServer.isShutdown() || callbackServer.isTerminated()) {
             this.callbackPort = port;
             log.info("[GrpcConnectionManager] Creating gRPC callback server on port: " + port);
 
-            // Use NettyServerBuilder directly to avoid OSGi ServiceLoader issues
             callbackServer = NettyServerBuilder.forPort(port)
                     .addService(callbackServiceImpl)
                     .build();
@@ -157,13 +161,11 @@ public class GrpcConnectionManager {
             callbackServer.start();
             callbackServerStarted = true;
 
-            // Get actual port if 0 was specified
             int actualPort = callbackServer.getPort();
             this.callbackPort = actualPort;
 
             log.info("[GrpcConnectionManager] gRPC callback server started on port: " + actualPort);
 
-            // Shutdown hook for graceful cleanup
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 log.info("[GrpcConnectionManager] Shutting down gRPC callback server via shutdown hook");
                 shutdownCallbackServer();
@@ -173,35 +175,19 @@ public class GrpcConnectionManager {
         return callbackServer;
     }
 
-    /**
-     * Check if callback server is started and running.
-     *
-     * @return true if server is started and not shutdown
-     */
     public boolean isCallbackServerStarted() {
         return callbackServerStarted && callbackServer != null &&
                !callbackServer.isShutdown() && !callbackServer.isTerminated();
     }
 
-    /**
-     * Get the callback server port.
-     *
-     * @return Port number
-     */
     public int getCallbackPort() {
         return callbackPort;
     }
 
-    /**
-     * Get the callback server address for clients to connect to.
-     *
-     * @return Address in format "host:port"
-     */
     public String getCallbackAddress() {
-        // In production, this should return the actual hostname/IP
-        // For now, using localhost
         return "localhost:" + callbackPort;
     }
+    */
 
     /**
      * Shutdown the client channel gracefully.
@@ -227,9 +213,8 @@ public class GrpcConnectionManager {
         }
     }
 
-    /**
-     * Shutdown the callback server gracefully.
-     */
+    // STALE - OLD UNIDIRECTIONAL CALLBACK SERVER SHUTDOWN
+    /*
     public synchronized void shutdownCallbackServer() {
         if (callbackServer != null) {
             log.info("[GrpcConnectionManager] Shutting down gRPC callback server");
@@ -244,6 +229,7 @@ public class GrpcConnectionManager {
             callbackServerStarted = false;
         }
     }
+    */
 
     /**
      * Shutdown all gRPC resources.
@@ -251,7 +237,7 @@ public class GrpcConnectionManager {
     public synchronized void shutdown() {
         log.info("[GrpcConnectionManager] Shutting down all gRPC resources");
         shutdownClientChannel();
-        shutdownCallbackServer();
+        // shutdownCallbackServer(); // STALE - old unidirectional callback server
     }
 
     /**
@@ -283,17 +269,18 @@ public class GrpcConnectionManager {
             }
         }
 
-        String callbackPortStr = System.getProperty("graaljs.grpc.callback.port");
-        if (callbackPortStr != null) {
-            try {
-                callbackPort = Integer.parseInt(callbackPortStr);
-            } catch (NumberFormatException e) {
-                log.warn("[GrpcConnectionManager] Invalid callback port value: " + callbackPortStr);
-            }
-        }
+        // STALE - OLD UNIDIRECTIONAL CALLBACK SERVER PORT CONFIG
+        // String callbackPortStr = System.getProperty("graaljs.grpc.callback.port");
+        // if (callbackPortStr != null) {
+        //     try {
+        //         callbackPort = Integer.parseInt(callbackPortStr);
+        //     } catch (NumberFormatException e) {
+        //         log.warn("[GrpcConnectionManager] Invalid callback port value: " + callbackPortStr);
+        //     }
+        // }
 
         log.info("[GrpcConnectionManager] Configuration loaded - ChannelPoolSize: " + channelPoolSize +
-                ", IdleTimeout: " + channelIdleTimeout + "s, CallbackPort: " + callbackPort);
+                ", IdleTimeout: " + channelIdleTimeout + "s");
     }
 
     /**
@@ -305,14 +292,10 @@ public class GrpcConnectionManager {
         this.channelIdleTimeout = seconds;
     }
 
-    /**
-     * Set callback port (for testing/configuration).
-     *
-     * @param port Port number
-     */
-    public void setCallbackPort(int port) {
-        this.callbackPort = port;
-    }
+    // STALE - OLD UNIDIRECTIONAL CALLBACK SERVER
+    // public void setCallbackPort(int port) {
+    //     this.callbackPort = port;
+    // }
 
     /**
      * Set channel pool size (for testing/configuration).

@@ -18,6 +18,21 @@
 
 package com.wso2.identity.asgardeo.scope.service.graaljs.transport;
 
+// ============================================================================
+// STALE CODE - OLD UNIDIRECTIONAL 2-CHANNEL gRPC APPROACH
+// ============================================================================
+// This class was part of the old unidirectional gRPC transport that used:
+//   - Separate unary RPCs for evaluate/executeCallback (IS → Sidecar)
+//   - A separate callback server on port 50052 (Sidecar → IS via GrpcCallbackServerImpl)
+//
+// Replaced by: GrpcStreamingTransportImpl (single bidirectional stream on port 50051)
+// The streaming approach handles both requests and callbacks on the same stream,
+// eliminating the need for a separate callback channel.
+//
+// TODO: Remove entirely during transport layer refactoring.
+// ============================================================================
+
+/*
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.StatusRuntimeException;
@@ -37,45 +52,21 @@ import java.util.concurrent.TimeUnit;
 
 import static io.grpc.Metadata.ASCII_STRING_MARSHALLER;
 
-/**
- * gRPC implementation of RemoteEngineTransport.
- * <p>
- * Uses gRPC with blocking stubs for synchronous communication with the remote JavaScript engine.
- * Provides request/response communication via gRPC unary RPCs.
- * <p>
- * Features:
- * - Automatic connection management via GrpcConnectionManager
- * - Configurable deadline/timeout per request
- * - Metadata propagation (correlation IDs, session info)
- * - Graceful error handling and retry logic
- */
 public class GrpcTransportImpl implements RemoteEngineTransport {
 
     private static final Log log = LogFactory.getLog(GrpcTransportImpl.class);
 
     private final String grpcTarget;
-    private final int requestTimeout; // seconds
+    private final int requestTimeout;
     private final GrpcConnectionManager connectionManager;
     private JsEngineServiceGrpc.JsEngineServiceBlockingStub blockingStub;
 
-    // Correlation ID for request tracing
     private final String correlationId;
 
-    /**
-     * Create a new gRPC transport.
-     *
-     * @param grpcTarget gRPC target address (e.g., "localhost:50051")
-     */
     public GrpcTransportImpl(String grpcTarget) {
-        this(grpcTarget, 30); // 30 second default timeout
+        this(grpcTarget, 30);
     }
 
-    /**
-     * Create a new gRPC transport with custom timeout.
-     *
-     * @param grpcTarget     gRPC target address (e.g., "localhost:50051")
-     * @param requestTimeout Request timeout in seconds
-     */
     public GrpcTransportImpl(String grpcTarget, int requestTimeout) {
         this.grpcTarget = grpcTarget;
         this.requestTimeout = requestTimeout;
@@ -121,11 +112,9 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
         try {
             ensureStub();
 
-            // Add deadline and metadata
             JsEngineServiceGrpc.JsEngineServiceBlockingStub stubWithDeadline =
                     blockingStub.withDeadlineAfter(requestTimeout, TimeUnit.SECONDS);
 
-            // Call RPC
             log.info("[GrpcTransportImpl] >>> Sending gRPC Evaluate request to sidecar at " + grpcTarget + " ...");
             long startTime = System.currentTimeMillis();
             EvaluateResponse response = stubWithDeadline.evaluate(request);
@@ -194,11 +183,9 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
         try {
             ensureStub();
 
-            // Add deadline
             JsEngineServiceGrpc.JsEngineServiceBlockingStub stubWithDeadline =
                     blockingStub.withDeadlineAfter(requestTimeout, TimeUnit.SECONDS);
 
-            // Call RPC
             log.info("[GrpcTransportImpl] >>> Sending gRPC ExecuteCallback to " + grpcTarget + " ...");
             long startTime = System.currentTimeMillis();
             ExecuteCallbackResponse response = stubWithDeadline.executeCallback(request);
@@ -264,31 +251,23 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
     public void close() throws IOException {
         log.info("[GrpcTransportImpl] ========== close() CALLED ==========");
         log.info("[GrpcTransportImpl] Closing gRPC transport for correlationId: " + correlationId);
-        // Note: We don't close the shared channel here - it's managed by GrpcConnectionManager
-        // This allows multiple RemoteJsEngine instances to share the same channel
         blockingStub = null;
         log.info("[GrpcTransportImpl] Blocking stub set to null (shared channel NOT closed)");
         log.info("[GrpcTransportImpl] ========== close() COMPLETED ==========");
     }
 
-    /**
-     * Ensure blocking stub is initialized with channel and interceptors.
-     */
     private void ensureStub() {
         log.info("[GrpcTransportImpl] ensureStub() - current stub: " + (blockingStub == null ? "NULL" : "EXISTS"));
         if (blockingStub == null) {
             log.info("[GrpcTransportImpl] Initializing NEW blocking stub for target: " + grpcTarget);
 
-            // Get channel from connection manager
             ManagedChannel channel = connectionManager.getClientChannel(grpcTarget);
             log.info("[GrpcTransportImpl] Got channel from connectionManager, channel state: " +
                     (channel.isShutdown() ? "SHUTDOWN" : channel.isTerminated() ? "TERMINATED" : "ACTIVE"));
 
-            // Create blocking stub
             blockingStub = JsEngineServiceGrpc.newBlockingStub(channel);
             log.info("[GrpcTransportImpl] Created JsEngineService blocking stub");
 
-            // Attach metadata interceptor for correlation ID
             Metadata metadata = new Metadata();
             Metadata.Key<String> correlationIdKey = Metadata.Key.of("Correlation-ID", ASCII_STRING_MARSHALLER);
             metadata.put(correlationIdKey, correlationId);
@@ -301,21 +280,12 @@ public class GrpcTransportImpl implements RemoteEngineTransport {
         }
     }
 
-    /**
-     * Get the gRPC target address.
-     *
-     * @return Target address
-     */
     public String getGrpcTarget() {
         return grpcTarget;
     }
 
-    /**
-     * Get the correlation ID for this transport instance.
-     *
-     * @return Correlation ID
-     */
     public String getCorrelationId() {
         return correlationId;
     }
 }
+*/
