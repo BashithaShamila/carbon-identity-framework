@@ -203,7 +203,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 // via DynamicContextProxy callbacks. Serializing it here causes a toString()
                 // fallback with WARN log. If this binding is ever needed, implement a proper
                 // toProto() conversion for JsGraalAuthenticationContext first.
-                if (!RemoteEngineConstants.CONTEXT_BINDING_KEY.equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
+                if (!"context".equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
                     requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(entry.getValue()));
                 }
             }
@@ -412,7 +412,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     // httpGet's onSuccess(context, data) would receive (data, undefined)).
                     if (arguments[i] instanceof JsGraalAuthenticationContext) {
                         requestBuilder.addArguments(
-                                ProtobufSerializer.toProto(RemoteEngineConstants.CONTEXT_PLACEHOLDER));
+                                ProtobufSerializer.toProto("__JsGraalAuthenticationContext_placeholder__"));
                         continue;
                     }
                     requestBuilder.addArguments(ProtobufSerializer.toProto(arguments[i]));
@@ -434,7 +434,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 // via DynamicContextProxy callbacks. Serializing it here causes a toString()
                 // fallback with WARN log. If this binding is ever needed, implement a proper
                 // toProto() conversion for JsGraalAuthenticationContext first.
-                if (!RemoteEngineConstants.CONTEXT_BINDING_KEY.equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
+                if (!"context".equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
                     Object value = entry.getValue();
                     if (log.isDebugEnabled()) {
                         log.debug("[RemoteJsEngine] Serializing binding: " + entry.getKey() + " = " +
@@ -701,13 +701,13 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
         // Handle proxy object property access: "__proxyref__::<referenceId>::<property>"
         // This enables lazy loading of complex objects (e.g., User objects from getUsersWithClaimValues)
-        if (propertyPath.startsWith(RemoteEngineConstants.PROXY_REF_PREFIX)) {
-            return getProxyObjectProperty(propertyPath.substring(RemoteEngineConstants.PROXY_REF_PREFIX.length()));
+        if (propertyPath.startsWith("__proxyref__::")) {
+            return getProxyObjectProperty(propertyPath.substring("__proxyref__::".length()));
         }
 
         // Handle host function return references: "__hostref__::<refId>::<property>"
-        if (propertyPath.startsWith(RemoteEngineConstants.HOST_REF_PREFIX)) {
-            return getHostRefProperty(propertyPath.substring(RemoteEngineConstants.HOST_REF_PREFIX.length()));
+        if (propertyPath.startsWith("__hostref__::")) {
+            return getHostRefProperty(propertyPath.substring("__hostref__::".length()));
         }
 
         if (authContext == null) {
@@ -715,14 +715,71 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             return null;
         }
 
-        // Create the JsGraalAuthenticationContext wrapper and navigate the property path
+        // Create the JsGraalAuthenticationContext wrapper
         JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
-        String[] parts = propertyPath.split(RemoteEngineConstants.PATH_SEPARATOR);
-        Object result = PropertyPathNavigator.navigatePath(parts, 0, jsContext);
+
+        // Navigate the property path: "request::params::foo" -> ["request", "params",
+        // "foo"]
+        String[] parts = propertyPath.split("::");
+        Object current = jsContext;
+
+        for (String part : parts) {
+            if (current == null) {
+                return null;
+            }
+
+            // Handle __keys__ special path - return member keys of current object
+            if ("__keys__".equals(part)) {
+                if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                    Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMemberKeys();
+                    log.debug("[RemoteJsEngine] __keys__ on proxy -> " +
+                            (keys != null ? keys.getClass().getSimpleName() : "null"));
+                    return keys;
+                }
+                return null;
+            }
+
+            // Handle special case for array-like access (e.g., "steps::1")
+            // JsGraalSteps implements ProxyArray, so we need to use get(long) for numeric
+            // indices
+            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                // Numeric index access on ProxyArray (e.g., JsGraalSteps)
+                int index = Integer.parseInt(part);
+                org.graalvm.polyglot.proxy.ProxyArray proxyArray = (org.graalvm.polyglot.proxy.ProxyArray) current;
+                current = proxyArray.get(index);
+                log.debug("[RemoteJsEngine] Accessed array index " + index + " -> " +
+                        (current != null ? current.getClass().getSimpleName() : "null"));
+            } else if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                // Numeric index access on ProxyObject - try getMember with string key
+                org.graalvm.polyglot.proxy.ProxyObject proxy = (org.graalvm.polyglot.proxy.ProxyObject) current;
+                current = proxy.getMember(part);
+            } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                // Standard member access
+                org.graalvm.polyglot.proxy.ProxyObject proxy = (org.graalvm.polyglot.proxy.ProxyObject) current;
+                current = proxy.getMember(part);
+                log.debug("[RemoteJsEngine] Accessed member '" + part + "' on proxy -> " +
+                        (current != null ? current.getClass().getSimpleName() : "null"));
+            } else if (current instanceof java.util.Map) {
+                // Map access
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+                current = map.get(part);
+            } else {
+                // Try reflection as last resort
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = current.getClass().getMethod(getterName);
+                    current = getter.invoke(current);
+                } catch (NoSuchMethodException e) {
+                    log.debug("[RemoteJsEngine] No getter for property: " + part);
+                    return null;
+                }
+            }
+        }
 
         log.debug("[RemoteJsEngine] getContextProperty '" + propertyPath + "' = " +
-                (result != null ? result.getClass().getSimpleName() : "null"));
-        return result;
+                (current != null ? current.getClass().getSimpleName() : "null"));
+        return current;
     }
 
     /**
@@ -730,20 +787,55 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      * Path format: "<refId>" or "<refId>::<property>::<subprop>..."
      */
     private Object getHostRefProperty(String path) {
-        String[] parts = path.split(RemoteEngineConstants.PATH_SEPARATOR);
+        String[] parts = path.split("::");
         String refId = parts[0];
-        Object root = hostFunctionRefs.get(refId);
+        Object current = hostFunctionRefs.get(refId);
 
-        if (root == null) {
+        if (current == null) {
             log.warn("[RemoteJsEngine] No host function ref found for ID: " + refId);
             return null;
         }
 
-        Object result = PropertyPathNavigator.navigatePath(parts, 1, root);
+        // Navigate remaining parts (skip refId at index 0)
+        for (int i = 1; i < parts.length; i++) {
+            String part = parts[i];
+            if (current == null) {
+                return null;
+            }
+
+            if ("__keys__".equals(part)) {
+                if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                    return ((org.graalvm.polyglot.proxy.ProxyObject) current).getMemberKeys();
+                }
+                return null;
+            }
+
+            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(Integer.parseInt(part));
+            } else if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+                current = map.get(part);
+            } else {
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = current.getClass().getMethod(getterName);
+                    current = getter.invoke(current);
+                } catch (NoSuchMethodException | IllegalAccessException
+                        | java.lang.reflect.InvocationTargetException e) {
+                    log.debug("[RemoteJsEngine] No getter for host ref property: " + part);
+                    return null;
+                }
+            }
+        }
 
         log.debug("[RemoteJsEngine] getHostRefProperty '" + path + "' = " +
-                (result != null ? result.getClass().getSimpleName() : "null"));
-        return result;
+                (current != null ? current.getClass().getSimpleName() : "null"));
+        return current;
     }
 
     /**
@@ -756,27 +848,83 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      * objects are cached and properties are fetched on-demand when accessed.
      */
     private Object getProxyObjectProperty(String path) {
-        String[] parts = path.split(RemoteEngineConstants.PATH_SEPARATOR);
+        String[] parts = path.split("::");
         String refId = parts[0];
-        Object root = proxyObjectCache.get(refId);
+        Object current = proxyObjectCache.get(refId);
 
-        if (root == null) {
+        if (current == null) {
             log.warn("[RemoteJsEngine] No proxy object found for reference ID: " + refId);
             return null;
         }
 
         if (log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Retrieved proxy object for refId: " + refId +
-                    ", type: " + root.getClass().getName());
+                    ", type: " + current.getClass().getName());
         }
 
-        Object result = PropertyPathNavigator.navigatePath(parts, 1, root);
+        // Navigate remaining parts (skip refId at index 0)
+        for (int i = 1; i < parts.length; i++) {
+            String part = parts[i];
+            if (current == null) {
+                return null;
+            }
+
+            if ("__keys__".equals(part)) {
+                if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                    return ((org.graalvm.polyglot.proxy.ProxyObject) current).getMemberKeys();
+                }
+                // For POJOs, return list of property names
+                try {
+                    List<String> keys = new ArrayList<>();
+                    for (java.lang.reflect.Method m : current.getClass().getMethods()) {
+                        if (m.getParameterCount() == 0 && m.getName().startsWith("get") &&
+                                !"getClass".equals(m.getName())) {
+                            String prop = Character.toLowerCase(m.getName().charAt(3)) +
+                                    m.getName().substring(4);
+                            keys.add(prop);
+                        }
+                    }
+                    return keys;
+                } catch (Exception e) {
+                    log.debug("[RemoteJsEngine] Error getting keys for proxy object: " + e.getMessage());
+                    return null;
+                }
+            }
+
+            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(Integer.parseInt(part));
+            } else if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+                current = map.get(part);
+            } else {
+                // Use reflection to access the property (e.g., getUsername() for "username")
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = current.getClass().getMethod(getterName);
+                    current = getter.invoke(current);
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Accessed property '" + part + "' via " + getterName +
+                                " -> " + (current != null ? current.getClass().getSimpleName() : "null"));
+                    }
+                } catch (NoSuchMethodException | IllegalAccessException
+                        | java.lang.reflect.InvocationTargetException e) {
+                    log.debug("[RemoteJsEngine] No getter for proxy object property: " + part +
+                            " on class: " + current.getClass().getName());
+                    return null;
+                }
+            }
+        }
 
         if (log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] getProxyObjectProperty '" + path + "' = " +
-                    (result != null ? result.getClass().getSimpleName() : "null"));
+                    (current != null ? current.getClass().getSimpleName() : "null"));
         }
-        return result;
+        return current;
     }
 
     /**
@@ -794,8 +942,8 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         // Handle host function return references
-        if (propertyPath.startsWith(RemoteEngineConstants.HOST_REF_PREFIX)) {
-            return setHostRefProperty(propertyPath.substring(RemoteEngineConstants.HOST_REF_PREFIX.length()), value);
+        if (propertyPath.startsWith("__hostref__::")) {
+            return setHostRefProperty(propertyPath.substring("__hostref__::".length()), value);
         }
 
         if (authContext == null) {
@@ -803,14 +951,143 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             return false;
         }
 
-        // Navigate to the parent object and set the final property via PropertyPathNavigator
-        String[] parts = propertyPath.split(RemoteEngineConstants.PATH_SEPARATOR);
+        // Navigate to the parent object and then set the final property
+        String[] parts = propertyPath.split("::");
         if (parts.length == 0) {
             return false;
         }
 
+        // Create the JsGraalAuthenticationContext wrapper
         JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
-        return PropertyPathNavigator.setProperty(parts, 0, jsContext, value);
+
+        // Navigate to the parent (all parts except the last one)
+        Object parent = jsContext;
+        for (int i = 0; i < parts.length - 1; i++) {
+            String part = parts[i];
+            if (parent == null) {
+                log.warn("[RemoteJsEngine] Null encountered at path segment: " + part);
+                return false;
+            }
+
+            if (part.matches("\\d+")) {
+                // Numeric segment: try ProxyArray.get first, then reflection fallback
+                // for OSGi classloader issues where instanceof may not match
+                int index = Integer.parseInt(part);
+                if (parent instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                    parent = ((org.graalvm.polyglot.proxy.ProxyArray) parent).get(index);
+                } else {
+                    // Reflection fallback: call get(long) directly on the object
+                    try {
+                        java.lang.reflect.Method getMethod = parent.getClass().getMethod("get", long.class);
+                        parent = getMethod.invoke(parent, (long) index);
+                        if (log.isDebugEnabled()) {
+                            log.debug("[RemoteJsEngine] setContextProperty: used reflection get(" + index +
+                                    ") on " + parent.getClass().getSimpleName());
+                        }
+                    } catch (NoSuchMethodException nsme) {
+                        // Not a ProxyArray-like object, try ProxyObject.getMember
+                        if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                            parent = ((org.graalvm.polyglot.proxy.ProxyObject) parent).getMember(part);
+                        } else {
+                            log.warn("[RemoteJsEngine] Cannot navigate numeric segment: " + part +
+                                    " on type: " + parent.getClass().getName());
+                            return false;
+                        }
+                    } catch (Exception e) {
+                        log.warn("[RemoteJsEngine] Reflection get() failed for segment: " + part, e);
+                        return false;
+                    }
+                }
+            } else if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                parent = ((org.graalvm.polyglot.proxy.ProxyObject) parent).getMember(part);
+            } else if (parent instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) parent;
+                parent = map.get(part);
+            } else {
+                // Try reflection getter as last resort
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = parent.getClass().getMethod(getterName);
+                    parent = getter.invoke(parent);
+                } catch (NoSuchMethodException e) {
+                    log.warn("[RemoteJsEngine] Cannot navigate path segment: " + part +
+                            " on type: " + parent.getClass().getName());
+                    return false;
+                }
+            }
+        }
+
+        // Now set the final property
+        String finalPart = parts[parts.length - 1];
+
+        if (parent == null) {
+            log.warn("[RemoteJsEngine] Parent is null, cannot set: " + finalPart);
+            return false;
+        }
+
+        // Try different ways to set the property
+        // Option 2: Wrap plain Java value as GraalVM Value before calling putMember.
+        // This mirrors the original in-process engine behavior where putMember always
+        // received a GraalVM Value object.
+        if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+            try {
+                Value wrappedValue = Value.asValue(value);
+                ((org.graalvm.polyglot.proxy.ProxyObject) parent).putMember(finalPart, wrappedValue);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Successfully set property via putMember: " + propertyPath);
+                }
+                return true;
+            } catch (Exception e) {
+                log.warn("[RemoteJsEngine] Direct putMember failed: " + e.getMessage());
+            }
+        } else {
+            // Reflection fallback for OSGi classloader issues where instanceof fails
+            try {
+                java.lang.reflect.Method putMethod = parent.getClass().getMethod(
+                        "putMember", String.class, Value.class);
+                Value wrappedValue = Value.asValue(value);
+                putMethod.invoke(parent, finalPart, wrappedValue);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Successfully set property via reflection putMember: " + propertyPath);
+                }
+                return true;
+            } catch (NoSuchMethodException nsme) {
+                // No putMember(String, Value) method — fall through to other approaches
+            } catch (Exception e) {
+                log.warn("[RemoteJsEngine] Reflection putMember failed: " + e.getMessage());
+            }
+        }
+
+        if (parent instanceof java.util.Map) {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> map = (java.util.Map<String, Object>) parent;
+            map.put(finalPart, value);
+            if (log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Successfully set property in map: " + propertyPath);
+            }
+            return true;
+        }
+
+        // Try reflection setter
+        try {
+            String setterName = "set" + Character.toUpperCase(finalPart.charAt(0)) + finalPart.substring(1);
+            java.lang.reflect.Method[] methods = parent.getClass().getMethods();
+            for (java.lang.reflect.Method method : methods) {
+                if (method.getName().equals(setterName) && method.getParameterCount() == 1) {
+                    method.invoke(parent, value);
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Successfully set property via setter: " + propertyPath);
+                    }
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[RemoteJsEngine] Setter failed for: " + finalPart, e);
+        }
+
+        log.warn("[RemoteJsEngine] Could not set property: " + propertyPath);
+        return false;
     }
 
     /**
@@ -818,20 +1095,73 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      * Path format: "<refId>::<property>::<subprop>..."
      */
     private boolean setHostRefProperty(String path, Object value) {
-        String[] parts = path.split(RemoteEngineConstants.PATH_SEPARATOR);
+        String[] parts = path.split("::");
         if (parts.length < 2) {
             log.warn("[RemoteJsEngine] setHostRefProperty requires at least refId and property: " + path);
             return false;
         }
 
         String refId = parts[0];
-        Object root = hostFunctionRefs.get(refId);
-        if (root == null) {
+        Object current = hostFunctionRefs.get(refId);
+        if (current == null) {
             log.warn("[RemoteJsEngine] No host function ref found for ID: " + refId);
             return false;
         }
 
-        return PropertyPathNavigator.setProperty(parts, 1, root, value);
+        // Navigate to parent (all parts except the last one, starting after refId)
+        for (int i = 1; i < parts.length - 1; i++) {
+            String part = parts[i];
+            if (current == null) {
+                return false;
+            }
+
+            if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+                current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(Integer.parseInt(part));
+            } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
+            } else if (current instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+                current = map.get(part);
+            } else {
+                try {
+                    String getterName = "get" + Character.toUpperCase(part.charAt(0)) + part.substring(1);
+                    java.lang.reflect.Method getter = current.getClass().getMethod(getterName);
+                    current = getter.invoke(current);
+                } catch (Exception e) {
+                    log.warn("[RemoteJsEngine] Cannot navigate host ref path segment: " + part);
+                    return false;
+                }
+            }
+        }
+
+        if (current == null) {
+            return false;
+        }
+
+        // Set the final property
+        String finalPart = parts[parts.length - 1];
+        if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+            try {
+                Value wrappedValue = Value.asValue(value);
+                ((org.graalvm.polyglot.proxy.ProxyObject) current).putMember(finalPart, wrappedValue);
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Successfully set host ref property: " + path);
+                }
+                return true;
+            } catch (Exception e) {
+                log.warn("[RemoteJsEngine] putMember failed on host ref: " + e.getMessage());
+            }
+        }
+        if (current instanceof java.util.Map) {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> map = (java.util.Map<String, Object>) current;
+            map.put(finalPart, value);
+            return true;
+        }
+
+        log.warn("[RemoteJsEngine] Could not set host ref property: " + path);
+        return false;
     }
 
     /**
@@ -1088,9 +1418,9 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         if (arg instanceof Map) {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) arg;
-            if (Boolean.TRUE.equals(map.get(RemoteEngineConstants.IS_CONTEXT_PROXY))) {
-                String proxyType = (String) map.get(RemoteEngineConstants.PROXY_TYPE_FIELD);
-                String basePath = (String) map.get(RemoteEngineConstants.BASE_PATH_FIELD);
+            if (Boolean.TRUE.equals(map.get("__isContextProxy"))) {
+                String proxyType = (String) map.get("__proxyType");
+                String basePath = (String) map.get("__basePath");
                 if (log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Received context proxy marker: type=" + proxyType +
                             ", basePath=" + basePath);
@@ -1262,7 +1592,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         // when the IdP data lookup doesn't match, causing createJsAuthenticatedUser to
         // throw.
         if ("authenticateduser".equals(proxyType) && basePath.matches("steps::\\d+::subject")) {
-            String[] parts = basePath.split(RemoteEngineConstants.PATH_SEPARATOR);
+            String[] parts = basePath.split("::");
             int stepNum = Integer.parseInt(parts[1]);
             if (log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Direct reconstruction of authenticateduser for step " + stepNum);
@@ -1308,7 +1638,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
 
         try {
-            String[] pathParts = basePath.split(RemoteEngineConstants.PATH_SEPARATOR);
+            String[] pathParts = basePath.split("::");
             Object current = new JsGraalAuthenticationContext(authContext);
 
             for (String part : pathParts) {

@@ -23,8 +23,6 @@ import io.grpc.stub.StreamObserver;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.CallbackServer;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ProxyTypeResolver;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineConstants;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ProtobufSerializer;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineTransport;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyRequest;
@@ -313,7 +311,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     @Override
     public String getCallbackAddress() {
         // In streaming mode, there's no separate callback address - it's the same stream
-        return RemoteEngineConstants.STREAMING_PREFIX + grpcTarget;
+        return "streaming://" + grpcTarget;
     }
 
     @Override
@@ -516,9 +514,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
             // Serialize result: use proxy object for complex types, primitive serialization otherwise
             SerializedValue serializedResult;
-            if (result != null && ProxyTypeResolver.isJsWrapperProxy(result)) {
+            if (result != null && isProxyType(result)) {
                 String refId = handler.storeObjectReference(result);
-                String proxyType = ProxyTypeResolver.getJsWrapperProxyType(result);
+                String proxyType = getProxyType(result);
                 if (log.isDebugEnabled()) {
                     log.debug("[GrpcStreaming] Serializing complex result as proxy: type=" + proxyType +
                             ", refId=" + refId);
@@ -619,7 +617,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                     .setSuccess(true);
 
             // Handle __keys__ special path - value is the member keys array
-            if (propertyPath.endsWith(RemoteEngineConstants.PATH_SEPARATOR + RemoteEngineConstants.KEYS_PROPERTY) || RemoteEngineConstants.KEYS_PROPERTY.equals(propertyPath)) {
+            if (propertyPath.endsWith("::__keys__") || "__keys__".equals(propertyPath)) {
                 if (value != null) {
                     extractMemberKeys(value, responseBuilder);
                 }
@@ -631,11 +629,11 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             }
 
             if (value != null) {
-                boolean isProxy = ProxyTypeResolver.isJsWrapperProxy(value);
+                boolean isProxy = isProxyType(value);
                 responseBuilder.setIsProxy(isProxy);
 
                 if (isProxy) {
-                    responseBuilder.setProxyType(ProxyTypeResolver.getJsWrapperProxyType(value));
+                    responseBuilder.setProxyType(getProxyType(value));
                     if (value instanceof org.graalvm.polyglot.proxy.ProxyObject) {
                         Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) value).getMemberKeys();
                         extractMemberKeys(keys, responseBuilder);
@@ -759,7 +757,28 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         return JsEngineStreamingServiceGrpc.newStub(channel);
     }
 
-    // Proxy type detection and name extraction delegated to ProxyTypeResolver
+    private boolean isProxyType(Object value) {
+        if (value == null) {
+            return false;
+        }
+        String className = value.getClass().getName();
+        return className.contains("JsGraal") ||
+               className.contains("JsServlet") ||
+               className.contains("JsStep") ||
+               className.contains("JsAuthenticated") ||
+               className.contains("JsWritable") ||
+               value instanceof org.graalvm.polyglot.proxy.ProxyObject;
+    }
+
+    private String getProxyType(Object value) {
+        String className = value.getClass().getSimpleName();
+        if (className.startsWith("JsGraal")) {
+            return className.substring(7).toLowerCase();
+        } else if (className.startsWith("Js")) {
+            return className.substring(2).toLowerCase();
+        }
+        return className.toLowerCase();
+    }
 
     private void extractMemberKeys(Object keys, ContextPropertyResponse.Builder responseBuilder) {
         if (keys instanceof String[]) {

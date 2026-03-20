@@ -322,7 +322,7 @@ public class HostCallbackServer implements Closeable {
             }
 
             SerializedValue serializedResult;
-            if (result != null && isProxyType(result)) {
+            if (result != null && ProxyTypeResolver.isJsWrapperProxy(result)) {
                 // Complex object: store reference and return as SerializedProxyObject
                 serializedResult = serializeAsProxyObject(result, handler);
             } else {
@@ -397,7 +397,7 @@ public class HostCallbackServer implements Closeable {
             }
 
             // Handle __keys__ special path - value is the member keys array
-            if (propertyPath.endsWith("::__keys__") || "__keys__".equals(propertyPath)) {
+            if (propertyPath.endsWith(RemoteEngineConstants.PATH_SEPARATOR + RemoteEngineConstants.KEYS_PROPERTY) || RemoteEngineConstants.KEYS_PROPERTY.equals(propertyPath)) {
                 ContextPropertyResponse.Builder keysBuilder = ContextPropertyResponse.newBuilder()
                         .setSuccess(true);
                 extractMemberKeys(value, keysBuilder);
@@ -405,8 +405,8 @@ public class HostCallbackServer implements Closeable {
             }
 
             // Determine if this is a proxy type that needs nested access
-            boolean isProxy = isProxyType(value);
-            String proxyType = isProxy ? getProxyType(value) : "";
+            boolean isProxy = ProxyTypeResolver.isJsWrapperProxy(value);
+            String proxyType = isProxy ? ProxyTypeResolver.getJsWrapperProxyType(value) : "";
 
             ContextPropertyResponse.Builder responseBuilder = ContextPropertyResponse.newBuilder()
                     .setSuccess(true)
@@ -503,7 +503,7 @@ public class HostCallbackServer implements Closeable {
     private SerializedValue serializeAsProxyObject(Object result,
                                                     CallbackServer.HostFunctionHandler handler) {
         String refId = handler.storeObjectReference(result);
-        String proxyType = getProxyType(result);
+        String proxyType = ProxyTypeResolver.getJsWrapperProxyType(result);
 
         if (log.isDebugEnabled()) {
             log.debug("[HostCallbackServer] Serializing complex result as proxy: type=" + proxyType +
@@ -522,18 +522,7 @@ public class HostCallbackServer implements Closeable {
     /**
      * Check if the value is a proxy type that needs nested access.
      */
-    private boolean isProxyType(Object value) {
-        if (value == null) {
-            return false;
-        }
-        String className = value.getClass().getName();
-        return className.contains("JsGraal") ||
-                className.contains("JsServlet") ||
-                className.contains("JsStep") ||
-                className.contains("JsAuthenticated") ||
-                className.contains("JsWritable") ||
-                value instanceof org.graalvm.polyglot.proxy.ProxyObject;
-    }
+    // JS wrapper proxy detection delegated to ProxyTypeResolver
 
     /**
      * Extract member keys from various return types of getMemberKeys().
@@ -574,18 +563,7 @@ public class HostCallbackServer implements Closeable {
         }
     }
 
-    /**
-     * Get the proxy type name for a value.
-     */
-    private String getProxyType(Object value) {
-        String className = value.getClass().getSimpleName();
-        if (className.startsWith("JsGraal")) {
-            return className.substring(7).toLowerCase(); // JsGraalServletRequest -> servletrequest
-        } else if (className.startsWith("Js")) {
-            return className.substring(2).toLowerCase(); // JsStep -> step
-        }
-        return className.toLowerCase();
-    }
+    // Proxy type name extraction delegated to ProxyTypeResolver
 
     @Override
     public void close() throws IOException {

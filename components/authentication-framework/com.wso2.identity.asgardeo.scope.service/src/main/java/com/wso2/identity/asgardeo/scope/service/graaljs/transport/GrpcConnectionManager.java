@@ -18,14 +18,19 @@
 
 package com.wso2.identity.asgardeo.scope.service.graaljs.transport;
 
+import io.grpc.ChannelCredentials;
+import io.grpc.Grpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.TlsChannelCredentials;
 // STALE IMPORT - OLD UNIDIRECTIONAL CALLBACK SERVER (kept for commented code below)
 // import io.grpc.Server;
 // import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineConstants;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -105,13 +110,11 @@ public class GrpcConnectionManager {
 
         if (channelPool == null) {
             log.info("[GrpcConnectionManager] Creating gRPC client channel pool of size " +
-                    channelPoolSize + " to: " + target);
+                    channelPoolSize + " to: " + target +
+                    ", mTLS: " + RemoteEngineConstants.MTLS_ENABLED);
             channelPool = new ManagedChannel[channelPoolSize];
             for (int i = 0; i < channelPoolSize; i++) {
-                channelPool[i] = ManagedChannelBuilder.forTarget(target)
-                        .usePlaintext() // For development - use TLS in production
-                        .idleTimeout(channelIdleTimeout, TimeUnit.SECONDS)
-                        .build();
+                channelPool[i] = createChannel(target);
             }
             log.info("[GrpcConnectionManager] gRPC client channel pool created successfully (" +
                     channelPoolSize + " channels)");
@@ -281,6 +284,57 @@ public class GrpcConnectionManager {
 
         log.info("[GrpcConnectionManager] Configuration loaded - ChannelPoolSize: " + channelPoolSize +
                 ", IdleTimeout: " + channelIdleTimeout + "s");
+    }
+
+    /**
+     * Create a single ManagedChannel to the given target.
+     * Uses mTLS when {@link RemoteEngineConstants#MTLS_ENABLED} is true,
+     * otherwise falls back to plaintext.
+     *
+     * @param target gRPC target (e.g., "localhost:50051")
+     * @return ManagedChannel instance
+     */
+    private ManagedChannel createChannel(String target) {
+        if (RemoteEngineConstants.MTLS_ENABLED) {
+            try {
+                String carbonHome = System.getProperty("carbon.home");
+                if (carbonHome == null) {
+                    throw new IllegalStateException("carbon.home system property is not set. " +
+                            "Cannot locate mTLS certificates.");
+                }
+                File certDir = new File(carbonHome, RemoteEngineConstants.MTLS_CERT_DIR);
+                File clientCert = new File(certDir, RemoteEngineConstants.MTLS_CLIENT_CERT);
+                File clientKey = new File(certDir, RemoteEngineConstants.MTLS_CLIENT_KEY);
+                File caCert = new File(certDir, RemoteEngineConstants.MTLS_CA_CERT);
+
+                System.out.println("[GrpcConnectionManager] mTLS enabled - loading certs from: " +
+                        certDir.getAbsolutePath());
+                System.out.println("[GrpcConnectionManager]   client cert: " + clientCert.getAbsolutePath() +
+                        " (exists=" + clientCert.exists() + ")");
+                System.out.println("[GrpcConnectionManager]   client key:  " + clientKey.getAbsolutePath() +
+                        " (exists=" + clientKey.exists() + ")");
+                System.out.println("[GrpcConnectionManager]   CA cert:     " + caCert.getAbsolutePath() +
+                        " (exists=" + caCert.exists() + ")");
+
+                ChannelCredentials credentials = TlsChannelCredentials.newBuilder()
+                        .keyManager(clientCert, clientKey)
+                        .trustManager(caCert)
+                        .build();
+
+                return Grpc.newChannelBuilder(target, credentials)
+                        .idleTimeout(channelIdleTimeout, TimeUnit.SECONDS)
+                        .build();
+
+            } catch (IOException e) {
+                throw new RuntimeException("[GrpcConnectionManager] Failed to initialize mTLS channel. " +
+                        "Ensure cert files exist in " + RemoteEngineConstants.MTLS_CERT_DIR, e);
+            }
+        } else {
+            return ManagedChannelBuilder.forTarget(target)
+                    .usePlaintext()
+                    .idleTimeout(channelIdleTimeout, TimeUnit.SECONDS)
+                    .build();
+        }
     }
 
     /**

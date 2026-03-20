@@ -77,7 +77,50 @@ public class ProtobufSerializer {
         return sessionProxyCache.get();
     }
 
-    // Proxy pattern detection delegated to ProxyTypeResolver.shouldUseProxyPattern()
+    /**
+     * Check if an object should use the proxy pattern instead of eager serialization.
+     * Proxy pattern is used for complex POJOs that might have expensive getter operations.
+     *
+     * @param obj The object to check.
+     * @return true if proxy pattern should be used, false otherwise.
+     */
+    private static boolean shouldUseProxyPattern(Object obj) {
+        if (obj == null) {
+            return false;
+        }
+
+        Class<?> clazz = obj.getClass();
+        String className = clazz.getName();
+
+        // Use proxy for domain objects that might have expensive operations
+        // Common patterns: User, AuthenticatedUser, custom domain objects
+        boolean matchesClassName = className.contains(".User") ||
+                className.contains(".user.") ||
+                className.contains(".model.") ||
+                className.contains(".domain.");
+
+        if (matchesClassName) {
+            System.out.println("[ProtobufSerializer] shouldUseProxyPattern: " + className +
+                    " - matches class pattern = true");
+            return true;
+        }
+
+        // Use proxy for objects with many getters (likely complex domain objects)
+        int getterCount = 0;
+        for (java.lang.reflect.Method m : clazz.getMethods()) {
+            if (m.getParameterCount() == 0 && m.getName().startsWith("get") &&
+                    !"getClass".equals(m.getName())) {
+                getterCount++;
+            }
+        }
+
+        boolean hasEnoughGetters = getterCount > 3;
+        System.out.println("[ProtobufSerializer] shouldUseProxyPattern: " + className +
+                " - getterCount=" + getterCount + " > 3? " + hasEnoughGetters);
+
+        // If object has more than 3 getters, it's likely complex enough for proxy
+        return hasEnoughGetters;
+    }
 
     /**
      * Convert a Java object to Protocol Buffers SerializedValue.
@@ -233,7 +276,7 @@ public class ProtobufSerializer {
         // accesses a property (e.g., users[i].username), it sends a callback to fetch
         // only that property on-demand.
         Map<String, Object> cache = getSessionProxyCache();
-        boolean shouldProxy = ProxyTypeResolver.shouldUseProxyPattern(serializable);
+        boolean shouldProxy = shouldUseProxyPattern(serializable);
         System.out.println("[ProtobufSerializer] POJO check for " + serializable.getClass().getName() +
                 " - cache=" + (cache != null ? "available" : "NULL") +
                 " shouldProxy=" + shouldProxy);
@@ -255,7 +298,7 @@ public class ProtobufSerializer {
             // Return a proxy marker instead of eagerly serializing all properties
             return SerializedValue.newBuilder()
                     .setProxyObject(SerializedProxyObject.newBuilder()
-                            .setType(RemoteEngineConstants.PROXY_TYPE_POJO)
+                            .setType("pojo")
                             .setReferenceId(referenceId)
                             .build())
                     .build();
@@ -345,8 +388,8 @@ public class ProtobufSerializer {
                 // For proxy objects, return a placeholder map with type info
                 SerializedProxyObject proxy = sv.getProxyObject();
                 Map<String, Object> proxyMap = new HashMap<>();
-                proxyMap.put(RemoteEngineConstants.PROXY_TYPE_FIELD, proxy.getType());
-                proxyMap.put(RemoteEngineConstants.REFERENCE_ID_FIELD, proxy.getReferenceId());
+                proxyMap.put("__proxyType", proxy.getType());
+                proxyMap.put("__referenceId", proxy.getReferenceId());
                 for (Map.Entry<String, SerializedValue> entry : proxy.getCachedPropertiesMap().entrySet()) {
                     proxyMap.put(entry.getKey(), fromProto(entry.getValue()));
                 }
