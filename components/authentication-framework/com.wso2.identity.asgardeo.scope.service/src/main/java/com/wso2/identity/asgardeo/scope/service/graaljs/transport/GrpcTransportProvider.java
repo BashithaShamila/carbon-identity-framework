@@ -53,8 +53,7 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
             log.debug("[GrpcTransportProvider] Transport instance #" + transportInstanceCount);
         }
         if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] Config details - grpcTarget: " + config.getGrpcTarget() +
-                    ", callbackPort: " + config.getCallbackPort());
+            log.debug("[GrpcTransportProvider] Config details - grpcTarget: " + config.getGrpcTarget());
         }
 
         String grpcTarget = config.getGrpcTarget();
@@ -81,8 +80,7 @@ public class GrpcTransportProvider implements TransportFactory.TransportProvider
             log.debug("[GrpcTransportProvider] ========== createCallbackServer() CALLED ==========");
         }
         if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] Config details - callbackPort: " + config.getCallbackPort() +
-                    ", grpcTarget: " + config.getGrpcTarget());
+            log.debug("[GrpcTransportProvider] Config details - grpcTarget: " + config.getGrpcTarget());
         }
 
         String grpcTarget = config.getGrpcTarget();

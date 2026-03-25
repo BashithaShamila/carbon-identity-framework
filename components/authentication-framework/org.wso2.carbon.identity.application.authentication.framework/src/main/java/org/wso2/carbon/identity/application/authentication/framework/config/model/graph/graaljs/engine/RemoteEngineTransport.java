@@ -30,7 +30,7 @@ import java.io.IOException;
  * Abstraction for remote JavaScript engine transport layer.
  * Provides request/response communication between the Identity Server and the remote JavaScript execution engine.
  * <p>
- * Implementations can use different transport mechanisms (Unix Domain Sockets, gRPC, HTTP, etc.)
+ * Implementations can use different transport mechanisms (gRPC, HTTP, etc.)
  * while maintaining the same protocol for script evaluation and callback execution.
  * <p>
  * This interface decouples the RemoteJsEngine from specific transport implementations,
@@ -56,6 +56,38 @@ public interface RemoteEngineTransport extends Closeable {
      * @throws IOException If communication with the remote engine fails.
      */
     ExecuteCallbackResponse sendExecuteCallback(ExecuteCallbackRequest request) throws IOException;
+
+    /**
+     * Send an evaluation request along with the callback handler for this session.
+     * In bidirectional streaming mode, the handler is captured in the stream closure,
+     * eliminating the need for session-based handler registration/lookup maps.
+     *
+     * @param request The evaluation request containing script and bindings.
+     * @param handler The callback handler for host function invocations on this session.
+     * @return The evaluation response with results and updated bindings.
+     * @throws IOException If communication with the remote engine fails.
+     */
+    default EvaluateResponse sendEvaluate(EvaluateRequest request,
+                                          CallbackServer.HostFunctionHandler handler) throws IOException {
+
+        return sendEvaluate(request);
+    }
+
+    /**
+     * Send a callback execution request along with the callback handler for this session.
+     * In bidirectional streaming mode, the handler is captured in the stream closure,
+     * eliminating the need for session-based handler registration/lookup maps.
+     *
+     * @param request The callback execution request containing function source and arguments.
+     * @param handler The callback handler for host function invocations on this session.
+     * @return The callback execution response with results and updated bindings.
+     * @throws IOException If communication with the remote engine fails.
+     */
+    default ExecuteCallbackResponse sendExecuteCallback(ExecuteCallbackRequest request,
+                                                        CallbackServer.HostFunctionHandler handler) throws IOException {
+
+        return sendExecuteCallback(request);
+    }
 
     /**
      * Establish connection to the remote JavaScript engine.

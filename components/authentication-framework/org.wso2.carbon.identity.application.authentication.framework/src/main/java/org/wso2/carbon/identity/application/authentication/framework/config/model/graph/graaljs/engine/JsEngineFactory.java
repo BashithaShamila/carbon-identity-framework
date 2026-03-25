@@ -24,8 +24,6 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.HostAccess;
 import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.Value;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.UdsCallbackServerImpl;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.UdsTransportImpl;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticatedUser;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsLogger;
@@ -64,39 +62,16 @@ public class JsEngineFactory {
          */
         LOCAL,
         /**
-         * Execute JavaScript in a remote sidecar process via UDS/RPC.
+         * Execute JavaScript in a remote sidecar process via gRPC.
          */
         REMOTE
     }
 
-    /**
-     * Transport type for remote JavaScript engine communication.
-     */
-    public enum TransportType {
-        /**
-         * Unix Domain Socket transport.
-         */
-        UDS,
-        /**
-         * gRPC transport.
-         */
-        GRPC
-    }
-
-    // Current execution mode - defaults to LOCAL (using Graal.js directly in IS)
+    // Current execution mode - defaults to REMOTE (sidecar via gRPC)
     private static ExecutionMode currentMode = ExecutionMode.REMOTE;
-
-    // Current transport type for remote mode - defaults to gRPC
-    private static TransportType currentTransportType = TransportType.GRPC;
-
-    // Default socket path for sidecar communication
-    private static String sidecarSocketPath = "/tmp/graaljs-sidecar.sock";
 
     // Default gRPC target for remote engine (host:port)
     private static String grpcTarget = "localhost:50051";
-
-    // Default gRPC callback server port (0 for automatic selection)
-    private static int grpcCallbackPort = 0;
 
     // Statement limit for local engine
     private static int javascriptResourceLimit = DEFAULT_GRAALJS_SCRIPT_STATEMENTS_LIMIT;
@@ -180,78 +155,8 @@ public class JsEngineFactory {
      * @return TransportConfig instance.
      */
     private TransportConfig createTransportConfig() {
-        // Using gRPC transport (requires com.wso2.identity.asgardeo.scope.service bundle)
-        // To switch back to UDS, change to: TransportConfig.forUds(sidecarSocketPath)
-        return TransportConfig.forGrpc(grpcTarget, grpcCallbackPort);
-
-        // Future implementation when other transports are ready:
-        /*
-        switch (currentTransportType) {
-            case GRPC:
-                return TransportConfig.forGrpc(grpcTarget, grpcCallbackPort);
-            case HTTP:
-                return TransportConfig.forHttp(httpEndpoint, httpCallbackPort);
-            case WEBSOCKET:
-                return TransportConfig.forWebSocket(wsUrl, wsCallbackPort);
-            case UDS:
-            default:
-                return TransportConfig.forUds(sidecarSocketPath);
-        }
-        */
-    }
-
-    /**
-     * Create a UDS transport for remote engine communication.
-     * NOTE: This method is deprecated. Use TransportFactory instead.
-     *
-     * @return UdsTransportImpl instance.
-     * @deprecated Use TransportFactory.createTransport() instead.
-     */
-    @Deprecated
-    private RemoteEngineTransport createUdsTransport() {
-        return new UdsTransportImpl(sidecarSocketPath);
-    }
-
-    /**
-     * Create a UDS callback server for receiving host function callbacks.
-     * NOTE: This method is deprecated. Use TransportFactory instead.
-     *
-     * @return UdsCallbackServerImpl instance wrapping the singleton HostCallbackServer.
-     * @deprecated Use TransportFactory.createCallbackServer() instead.
-     */
-    @Deprecated
-    private CallbackServer createUdsCallbackServer() {
-        return new UdsCallbackServerImpl();
-    }
-
-    /**
-     * Create a gRPC transport for remote engine communication.
-     * NOTE: This method is deprecated. Use TransportFactory instead.
-     *
-     * @return GrpcTransportImpl instance.
-     * @deprecated Use TransportFactory.createTransport() instead.
-     */
-    @Deprecated
-    private RemoteEngineTransport createGrpcTransport() {
-        // gRPC implementation moved to com.wso2.identity.asgardeo.scope.service jar
-        // Use TransportFactory instead
-        TransportConfig config = TransportConfig.forGrpc(grpcTarget, grpcCallbackPort);
-        return TransportFactory.getInstance().createTransport(config);
-    }
-
-    /**
-     * Create a gRPC callback server for receiving host function callbacks.
-     * NOTE: This method is deprecated. Use TransportFactory instead.
-     *
-     * @return GrpcCallbackServerImpl instance.
-     * @deprecated Use TransportFactory.createCallbackServer() instead.
-     */
-    @Deprecated
-    private CallbackServer createGrpcCallbackServer() {
-        // gRPC implementation moved to com.wso2.identity.asgardeo.scope.service jar
-        // Use TransportFactory instead
-        TransportConfig config = TransportConfig.forGrpc(grpcTarget, grpcCallbackPort);
-        return TransportFactory.getInstance().createCallbackServer(config);
+        // gRPC transport via com.wso2.identity.asgardeo.scope.service OSGi bundle
+        return TransportConfig.forGrpc(grpcTarget);
     }
 
     /**
@@ -264,87 +169,12 @@ public class JsEngineFactory {
     }
 
     /**
-     * Set the execution mode.
-     * Note: In future, this will be deprecated in favor of dynamic routing.
-     *
-     * @param mode The execution mode to set.
-     */
-    public static void setCurrentMode(ExecutionMode mode) {
-        currentMode = mode;
-        log.info("JavaScript engine execution mode set to: " + mode);
-    }
-
-    /**
-     * Get the sidecar socket path.
-     *
-     * @return Socket path string.
-     */
-    public static String getSidecarSocketPath() {
-        return sidecarSocketPath;
-    }
-
-    /**
-     * Set the sidecar socket path.
-     *
-     * @param socketPath The socket path.
-     */
-    public static void setSidecarSocketPath(String socketPath) {
-        sidecarSocketPath = socketPath;
-    }
-
-    /**
-     * Get the current transport type.
-     *
-     * @return Current TransportType.
-     */
-    public static TransportType getCurrentTransportType() {
-        return currentTransportType;
-    }
-
-    /**
-     * Set the transport type for remote engine communication.
-     *
-     * @param transportType The transport type to set.
-     */
-    public static void setCurrentTransportType(TransportType transportType) {
-        currentTransportType = transportType;
-        log.info("JavaScript engine transport type set to: " + transportType);
-    }
-
-    /**
      * Get the gRPC target address.
      *
      * @return gRPC target string (host:port).
      */
     public static String getGrpcTarget() {
         return grpcTarget;
-    }
-
-    /**
-     * Set the gRPC target address.
-     *
-     * @param target The gRPC target (host:port).
-     */
-    public static void setGrpcTarget(String target) {
-        grpcTarget = target;
-    }
-
-    /**
-     * Get the gRPC callback server port.
-     *
-     * @return gRPC callback port.
-     */
-    public static int getGrpcCallbackPort() {
-        return grpcCallbackPort;
-    }
-
-    /**
-     * Set the gRPC callback server port.
-     *
-     * @param port The callback server port (0 for automatic selection).
-     */
-    public static void setGrpcCallbackPort(int port) {
-        grpcCallbackPort = port;
     }
 
     /**
@@ -415,15 +245,9 @@ public class JsEngineFactory {
             }
         }
 
-        // Future: Read execution mode, transport type, and connection settings from config
         if (currentMode == ExecutionMode.REMOTE) {
-            if (currentTransportType == TransportType.GRPC) {
-                log.info("JsEngineFactory initialized. Mode: " + currentMode +
-                        ", Transport: " + currentTransportType + ", gRPC Target: " + grpcTarget);
-            } else {
-                log.info("JsEngineFactory initialized. Mode: " + currentMode +
-                        ", Transport: " + currentTransportType + ", Socket: " + sidecarSocketPath);
-            }
+            log.info("JsEngineFactory initialized. Mode: " + currentMode +
+                    ", gRPC Target: " + grpcTarget);
         } else {
             log.info("JsEngineFactory initialized. Mode: " + currentMode);
         }

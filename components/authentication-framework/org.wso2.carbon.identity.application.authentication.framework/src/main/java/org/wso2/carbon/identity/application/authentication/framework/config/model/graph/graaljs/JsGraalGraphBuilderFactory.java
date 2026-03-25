@@ -29,8 +29,6 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsBaseGraphBuilder;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericGraphBuilderFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericSerializer;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.HostCallbackServer;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngine;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngineFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.AbstractJSObjectWrapper;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticatedUser;
@@ -84,11 +82,8 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
         jsEngineFactory = JsEngineFactory.getInstance();
         jsEngineFactory.setStatementLimit(javascriptResourceLimit);
 
-        // Initialize the host callback server for remote mode
-        // This will be used when sidecar needs to call back to IS for host functions
         if (jsEngineFactory.getDefaultMode() == JsEngineFactory.ExecutionMode.REMOTE) {
-            HostCallbackServer.getInstance();
-            LOG.info("GraalJS engine abstraction initialized in REMOTE mode");
+            LOG.info("GraalJS engine abstraction initialized in REMOTE mode (gRPC)");
         } else {
             LOG.info("GraalJS engine abstraction initialized in LOCAL mode");
         }
@@ -217,28 +212,6 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
 
         return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, createEngine(authenticationContext),
                 currentNode);
-    }
-
-    /**
-     * Get the JsEngineFactory instance.
-     * This can be used to create JsEngine instances for remote or local execution.
-     *
-     * @return The JsEngineFactory instance.
-     */
-    public JsEngineFactory getJsEngineFactory() {
-        return jsEngineFactory;
-    }
-
-    /**
-     * Create a JsEngine for the given authentication context.
-     * The engine type (local or remote) is determined by the factory's
-     * configuration.
-     *
-     * @param authenticationContext The authentication context.
-     * @return A JsEngine instance.
-     */
-    public JsEngine createJsEngine(AuthenticationContext authenticationContext) {
-        return jsEngineFactory.createEngine(authenticationContext);
     }
 
     private void setJavascriptResourceLimit() {

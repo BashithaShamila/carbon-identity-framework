@@ -20,19 +20,13 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.UdsCallbackServerImpl;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.UdsTransportImpl;
-
-// GRPC imports removed - implementation moved to com.wso2.identity.asgardeo.scope.service jar
-// import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.GrpcCallbackServerImpl;
-// import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.impl.GrpcTransportImpl;
 
 import java.util.HashMap;
 import java.util.Map;
 
 /**
  * Factory for creating transport and callback server implementations.
- * Uses Strategy pattern to support pluggable transports (UDS, gRPC, HTTP, WebSocket, etc.).
+ * Uses Strategy pattern to support pluggable transports (gRPC, HTTP, WebSocket, etc.).
  * <p>
  * This factory decouples the engine layer from specific transport implementations,
  * allowing new transports to be added without modifying existing code.
@@ -40,7 +34,7 @@ import java.util.Map;
  * Usage:
  * <pre>
  * TransportFactory factory = TransportFactory.getInstance();
- * TransportConfig config = TransportConfig.forUds("/tmp/socket.sock");
+ * TransportConfig config = TransportConfig.forGrpc("localhost:50051", 0);
  * RemoteEngineTransport transport = factory.createTransport(config);
  * CallbackServer callbackServer = factory.createCallbackServer(config);
  * </pre>
@@ -64,17 +58,9 @@ public class TransportFactory {
      * Private constructor - use getInstance().
      */
     private TransportFactory() {
-        // Register built-in transport providers
-        registerProvider("UDS", new UdsTransportProvider());
-
-        // GRPC provider moved to com.wso2.identity.asgardeo.scope.service jar
-        // It will be registered via OSGi service activation
-        // registerProvider("GRPC", new GrpcTransportProvider());
-
-        // Future transports can be registered here:
-        // registerProvider("HTTP", new HttpTransportProvider());
-        // registerProvider("WEBSOCKET", new WebSocketTransportProvider());
-
+        // No built-in providers. All transports are registered via OSGi service activation.
+        // GRPC is registered by GrpcTransportServiceComponent from com.wso2.identity.asgardeo.scope.service jar.
+        // Future transports register the same way: factory.registerProvider("TYPE", new Provider())
         log.info("[TransportFactory] Initialized with providers: " + providers.keySet());
     }
 
@@ -161,73 +147,4 @@ public class TransportFactory {
         CallbackServer createCallbackServer(TransportConfig config);
     }
 
-    /**
-     * Built-in provider for UDS (Unix Domain Socket) transport.
-     */
-    private static class UdsTransportProvider implements TransportProvider {
-
-        @Override
-        public RemoteEngineTransport createTransport(TransportConfig config) {
-            String socketPath = config.getSocketPath();
-            if (socketPath == null || socketPath.isEmpty()) {
-                throw new IllegalArgumentException("Socket path is required for UDS transport");
-            }
-            return new UdsTransportImpl(socketPath);
-        }
-
-        @Override
-        public CallbackServer createCallbackServer(TransportConfig config) {
-            // UdsCallbackServerImpl wraps the singleton HostCallbackServer
-            return new UdsCallbackServerImpl();
-        }
-    }
-
-    /**
-     * Built-in provider for gRPC transport.
-     * MOVED to com.wso2.identity.asgardeo.scope.service.graaljs.transport.GrpcTransportProvider
-     * This provider is now registered via OSGi service activation.
-     */
-    /*
-    private static class GrpcTransportProvider implements TransportProvider {
-
-        @Override
-        public RemoteEngineTransport createTransport(TransportConfig config) {
-            String grpcTarget = config.getGrpcTarget();
-            if (grpcTarget == null || grpcTarget.isEmpty()) {
-                throw new IllegalArgumentException("gRPC target is required for GRPC transport");
-            }
-            return new GrpcTransportImpl(grpcTarget);
-        }
-
-        @Override
-        public CallbackServer createCallbackServer(TransportConfig config) {
-            int callbackPort = config.getCallbackPort();
-            return new GrpcCallbackServerImpl(callbackPort);
-        }
-    }
-    */
-
-    /**
-     * Example: HTTP transport provider (not implemented yet).
-     * Uncomment when HttpTransportImpl and HttpCallbackServerImpl are available.
-     */
-    /*
-    private static class HttpTransportProvider implements TransportProvider {
-
-        @Override
-        public RemoteEngineTransport createTransport(TransportConfig config) {
-            String httpUrl = config.getHttpUrl();
-            if (httpUrl == null || httpUrl.isEmpty()) {
-                throw new IllegalArgumentException("HTTP URL is required for HTTP transport");
-            }
-            return new HttpTransportImpl(httpUrl);
-        }
-
-        @Override
-        public CallbackServer createCallbackServer(TransportConfig config) {
-            int callbackPort = config.getCallbackPort();
-            return new HttpCallbackServerImpl(callbackPort);
-        }
-    }
-    */
 }

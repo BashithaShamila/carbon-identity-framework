@@ -81,13 +81,10 @@ public final class RemoteEngineConstants {
     /** The binding key for the callback context in sidecar. */
     public static final String CALLBACK_CONTEXT_KEY = "__callbackContext";
 
-    // ============ Path and Transport ============
+    // ============ Path ============
 
     /** Separator used in property paths (e.g., "steps::1::subject"). */
     public static final String PATH_SEPARATOR = "::";
-
-    /** Prefix indicating streaming transport mode. */
-    public static final String STREAMING_PREFIX = "streaming://";
 
     // ============ Proxy Types ============
 

@@ -37,12 +37,8 @@ import org.wso2.carbon.identity.application.authentication.framework.context.Aut
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedIdPData;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
 
-import org.graalvm.polyglot.Value;
-
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,8 +51,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Host function calls from the sidecar are routed back to IS via the callback
  * server.
  * <p>
- * This implementation is decoupled from specific transport mechanisms (UDS,
- * gRPC, etc.)
+ * This implementation is decoupled from specific transport mechanisms
  * through the RemoteEngineTransport and CallbackServer abstractions.
  */
 public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHandler {
@@ -64,7 +59,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     private static final Log log = LogFactory.getLog(RemoteJsEngine.class);
 
     private final RemoteEngineTransport transport;
-    private final CallbackServer callbackServer;
     private final String sessionId;
     private final AuthenticationContext authContext;
     // CRITICAL FIX: Use ConcurrentHashMap to prevent race conditions during
@@ -88,29 +82,23 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     // setupThreadContext/clearThreadContext pairs to replicate local mode behavior.
     private volatile AuthGraphNode accumulatedDynamicBaseNode;
     private boolean closed = false;
-    private boolean handlerRegistered = false;
 
     /**
      * Create a new remote JavaScript engine.
      *
      * @param transport      The transport layer for communicating with the remote
      *                       engine.
-     * @param callbackServer The callback server for receiving host function
-     *                       invocations.
+     * @param callbackServer The callback server (unused in streaming mode, kept for API compat).
      * @param authContext    The authentication context for this session.
      */
     public RemoteJsEngine(RemoteEngineTransport transport, CallbackServer callbackServer,
             AuthenticationContext authContext) {
         this.transport = transport;
-        this.callbackServer = callbackServer;
-        // Note: Proxy cache ThreadLocal is set per-thread in HostCallbackServer/GrpcStreamingTransportImpl
-        // before serialization, not here in constructor (different thread context)
         this.authContext = authContext;
         this.sessionId = UUID.randomUUID().toString();
         if (log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Created with session: " + sessionId +
                     ", transport: " + transport.getClass().getSimpleName() +
-                    ", callbackServer: " + callbackServer.getClass().getSimpleName() +
                     ", SP: " + (authContext != null ? authContext.getServiceProviderName() : "null"));
         }
     }
@@ -163,11 +151,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             }
             ensureConnected();
             if (log.isDebugEnabled()) {
-                log.debug("[RemoteJsEngine] Connection established, registering handler...");
-            }
-            ensureHandlerRegistered();
-            if (log.isDebugEnabled()) {
-                log.debug("[RemoteJsEngine] Handler registered: " + handlerRegistered);
+                log.debug("[RemoteJsEngine] Connection established");
             }
             long tConnectDone = System.currentTimeMillis();
 
@@ -182,15 +166,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     .setSessionId(sessionId)
                     .setScript(script)
                     .setSourceIdentifier(sourceIdentifier != null ? sourceIdentifier : "script");
-
-            // Set callback address for host function callbacks
-            String callbackAddress = callbackServer.getCallbackAddress();
-            if (log.isDebugEnabled()) {
-                log.debug("[RemoteJsEngine] Callback address: " + callbackAddress);
-            }
-            if (callbackAddress != null) {
-                requestBuilder.setCallbackSocketPath(callbackAddress);
-            }
 
             // Serialize bindings
             if (log.isDebugEnabled()) {
@@ -249,7 +224,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             if (log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Sending evaluate request to remote engine...");
             }
-            EvaluateResponse response = transport.sendEvaluate(requestBuilder.build());
+            EvaluateResponse response = transport.sendEvaluate(requestBuilder.build(), this);
             long tResponseReceived = System.currentTimeMillis();
             if (log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Received response, success: " + response.getSuccess());
@@ -327,11 +302,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             }
             ensureConnected();
             if (log.isDebugEnabled()) {
-                log.debug("[RemoteJsEngine] executeCallback - connection OK, registering handler...");
-            }
-            ensureHandlerRegistered();
-            if (log.isDebugEnabled()) {
-                log.debug("[RemoteJsEngine] executeCallback - handler registered: " + handlerRegistered);
+                log.debug("[RemoteJsEngine] executeCallback - connection established");
             }
             long tConnectDone = System.currentTimeMillis();
 
@@ -361,15 +332,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             ExecuteCallbackRequest.Builder requestBuilder = ExecuteCallbackRequest.newBuilder()
                     .setSessionId(sessionId)
                     .setFunctionSource(functionSource);
-
-            // Set callback address
-            String callbackAddress = callbackServer.getCallbackAddress();
-            if (log.isDebugEnabled()) {
-                log.debug("[RemoteJsEngine] executeCallback - callback address: " + callbackAddress);
-            }
-            if (callbackAddress != null) {
-                requestBuilder.setCallbackSocketPath(callbackAddress);
-            }
 
             // Add context data for proxy object reconstruction
             if (context != null) {
@@ -467,7 +429,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             if (log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Sending executeCallback request to remote engine...");
             }
-            ExecuteCallbackResponse response = transport.sendExecuteCallback(requestBuilder.build());
+            ExecuteCallbackResponse response = transport.sendExecuteCallback(requestBuilder.build(), this);
             long tResponseReceived = System.currentTimeMillis();
 
             // Phase 4: Response processing
@@ -551,11 +513,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     public void close() {
         if (!closed) {
             closed = true;
-
-            // Unregister from callback server
-            if (handlerRegistered) {
-                callbackServer.unregisterHandler(sessionId);
-            }
 
             try {
                 transport.close();
@@ -683,11 +640,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         log.debug("[RemoteJsEngine] Stored object reference: " + refId +
                 " -> " + (obj != null ? obj.getClass().getSimpleName() : "null"));
         return refId;
-    }
-
-    @Override
-    public Object resolveObjectReference(String refId) {
-        return hostFunctionRefs.get(refId);
     }
 
     /**
@@ -1370,21 +1322,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             if (log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Connected to remote engine successfully");
             }
-        }
-    }
-
-    private void ensureHandlerRegistered() throws IOException {
-        if (!handlerRegistered) {
-            if (log.isDebugEnabled()) {
-                log.debug("[RemoteJsEngine] Starting callback server if needed");
-            }
-            callbackServer.start();
-            if (log.isDebugEnabled()) {
-                log.debug("[RemoteJsEngine] Registering handler with callback server: " +
-                        callbackServer.getClass().getSimpleName());
-            }
-            callbackServer.registerHandler(sessionId, this);
-            handlerRegistered = true;
         }
     }
 }

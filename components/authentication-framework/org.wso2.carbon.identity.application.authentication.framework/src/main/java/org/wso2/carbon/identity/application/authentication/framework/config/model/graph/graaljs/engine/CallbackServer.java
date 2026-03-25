@@ -24,51 +24,10 @@ import java.io.IOException;
 /**
  * Abstraction for callback server that receives host function invocations from remote JavaScript engine.
  * <p>
- * When the remote JavaScript engine executes host functions (like executeStep, sendError, etc.),
- * it sends callback requests to this server. The server routes these callbacks to the appropriate
- * handler based on session ID.
- * <p>
- * Implementations can use different transport mechanisms (Unix Domain Sockets, gRPC, HTTP, etc.)
- * for receiving callbacks while maintaining the same handler contract.
+ * In bidirectional streaming mode, callbacks are handled inline on the same stream.
+ * The HostFunctionHandler interface defines the contract for processing these callbacks.
  */
 public interface CallbackServer extends Closeable {
-
-    /**
-     * Register a handler for a specific session.
-     * The handler will receive all host function callbacks for the registered session.
-     *
-     * @param sessionId The session ID to associate with this handler.
-     * @param handler   The handler that will process host function invocations.
-     */
-    void registerHandler(String sessionId, HostFunctionHandler handler);
-
-    /**
-     * Unregister the handler for a specific session.
-     * After this call, the session will no longer receive callbacks.
-     *
-     * @param sessionId The session ID to unregister.
-     */
-    void unregisterHandler(String sessionId);
-
-    /**
-     * Get the callback address that remote engines should use to connect back to this server.
-     * <p>
-     * The format of the address depends on the transport implementation:
-     * - UDS: Socket file path (e.g., "/tmp/graaljs-callback.sock")
-     * - gRPC: Host and port (e.g., "localhost:50051")
-     * - HTTP: URL (e.g., "http://localhost:8080/callback")
-     *
-     * @return The callback address string.
-     */
-    String getCallbackAddress();
-
-    /**
-     * Start the callback server.
-     * This method should be idempotent - calling it multiple times should not start multiple servers.
-     *
-     * @throws IOException If server startup fails.
-     */
-    void start() throws IOException;
 
     /**
      * Stop the callback server and release all resources.
@@ -134,16 +93,6 @@ public interface CallbackServer extends Closeable {
          * @return A unique reference ID for the stored object, or null if not supported.
          */
         default String storeObjectReference(Object obj) {
-            return null;
-        }
-
-        /**
-         * Resolve a previously stored object reference.
-         *
-         * @param refId The reference ID returned by {@link #storeObjectReference(Object)}.
-         * @return The stored object, or null if not found.
-         */
-        default Object resolveObjectReference(String refId) {
             return null;
         }
     }
