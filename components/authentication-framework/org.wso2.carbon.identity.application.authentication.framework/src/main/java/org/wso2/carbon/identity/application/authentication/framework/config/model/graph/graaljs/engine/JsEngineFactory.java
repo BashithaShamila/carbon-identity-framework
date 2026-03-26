@@ -155,7 +155,7 @@ public class JsEngineFactory {
      * @return TransportConfig instance.
      */
     private TransportConfig createTransportConfig() {
-        // gRPC transport via com.wso2.identity.asgardeo.scope.service OSGi bundle
+        // gRPC transport via org.wso2.carbon.identity.application.authentication.framework.grpc OSGi bundle
         return TransportConfig.forGrpc(grpcTarget);
     }
 

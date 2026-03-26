@@ -59,7 +59,7 @@ public class TransportFactory {
      */
     private TransportFactory() {
         // No built-in providers. All transports are registered via OSGi service activation.
-        // GRPC is registered by GrpcTransportServiceComponent from com.wso2.identity.asgardeo.scope.service jar.
+        // GRPC is registered by GrpcTransportServiceComponent from org.wso2.carbon.identity.application.authentication.framework.grpc jar.
         // Future transports register the same way: factory.registerProvider("TYPE", new Provider())
         log.info("[TransportFactory] Initialized with providers: " + providers.keySet());
     }

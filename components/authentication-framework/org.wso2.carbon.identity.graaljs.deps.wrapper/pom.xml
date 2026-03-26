@@ -54,7 +54,7 @@
             <version>3.21.12</version>
         </dependency>
 
-        <!-- gRPC dependencies REMOVED - now provided by com.wso2.identity.asgardeo.scope.service jar -->
+        <!-- gRPC dependencies REMOVED - now provided by org.wso2.carbon.identity.application.authentication.framework.grpc jar -->
         <!-- The new jar handles all gRPC transport implementation -->
 
         <!-- Logging -->
@@ -94,7 +94,7 @@
                                     <include>com.kohlschutter.junixsocket:junixsocket-common</include>
                                     <include>com.kohlschutter.junixsocket:junixsocket-native-common</include>
                                     <include>com.google.protobuf:protobuf-java</include>
-                                    <!-- gRPC artifacts removed - now in com.wso2.identity.asgardeo.scope.service -->
+                                    <!-- gRPC artifacts removed - now in org.wso2.carbon.identity.application.authentication.framework.grpc -->
                                 </includes>
                             </artifactSet>
                             <filters>

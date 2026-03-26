@@ -38,7 +38,7 @@
         <module>org.wso2.carbon.identity.application.authentication.endpoint.util</module>
         <module>org.wso2.carbon.identity.application.authentication.framework</module>
         <module>org.wso2.carbon.identity.graaljs.deps.wrapper</module>
-        <module>com.wso2.identity.asgardeo.scope.service</module>
+        <module>org.wso2.carbon.identity.application.authentication.framework.grpc</module>
     </modules>
 
 </project>
