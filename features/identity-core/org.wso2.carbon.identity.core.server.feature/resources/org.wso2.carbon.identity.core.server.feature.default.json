@@ -903,11 +903,8 @@
   "authentication.adaptive.authenticator_name_in_auth_config.enable": true,
   "authentication.adaptive.allow_updating_authenticated_subject": false,
   "authentication.adaptive.graaljs.script_statements_limit": "0",
-  "authentication.adaptive.graaljs.engine_selection_mode": "static",
-  "authentication.adaptive.graaljs.engine_type": "REMOTE",
+  "authentication.adaptive.graaljs.engine_mode": "REMOTE",
   "authentication.adaptive.graaljs.grpc_target": "localhost:50051",
-  "authentication.adaptive.graaljs.dynamic_routing_field": "",
-  "authentication.adaptive.graaljs.dynamic_routing_remote_values": "",
   "authentication.adaptive.shared_applications.enable": false,
   "AdaptiveAuth.ScriptEngine": "graaljs",
 

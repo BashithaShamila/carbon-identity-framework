@@ -723,25 +723,15 @@ public abstract class FrameworkConstants {
                 = "AdaptiveAuth.GraalJS.ScriptStatementsLimit";
         public static final int DEFAULT_GRAALJS_SCRIPT_STATEMENTS_LIMIT = 0;
 
-        // Engine selection mode: "static" (server-level) or "dynamic" (per-request routing)
-        public static final String GRAALJS_ENGINE_SELECTION_MODE
-                = "AdaptiveAuth.GraalJS.EngineSelectionMode";
-        // For static mode: "LOCAL" or "REMOTE"
-        public static final String GRAALJS_ENGINE_TYPE
-                = "AdaptiveAuth.GraalJS.EngineType";
+        // Engine mode: "LOCAL", "REMOTE", or "HYBRID"
+        public static final String GRAALJS_ENGINE_MODE
+                = "AdaptiveAuth.GraalJS.EngineMode";
         // gRPC target for remote engine (host:port)
         public static final String GRAALJS_GRPC_TARGET
                 = "AdaptiveAuth.GraalJS.GrpcTarget";
-        // For dynamic mode: which AuthenticationContext field to route on
-        public static final String GRAALJS_DYNAMIC_ROUTING_FIELD
-                = "AdaptiveAuth.GraalJS.DynamicRoutingField";
-        // For dynamic mode: comma-separated field values that route to REMOTE engine
-        public static final String GRAALJS_DYNAMIC_ROUTING_REMOTE_VALUES
-                = "AdaptiveAuth.GraalJS.DynamicRoutingRemoteValues";
 
         // Defaults
-        public static final String DEFAULT_ENGINE_SELECTION_MODE = "static";
-        public static final String DEFAULT_ENGINE_TYPE = "REMOTE";
+        public static final String DEFAULT_ENGINE_MODE = "REMOTE";
         public static final String DEFAULT_GRPC_TARGET = "localhost:50051";
     }
 

@@ -33,19 +33,13 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticatedUser;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.handler.sequence.impl.GraalSelectAcrFromFunction;
+import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
-
-import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.DEFAULT_ENGINE_SELECTION_MODE;
+import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.DEFAULT_ENGINE_MODE;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.DEFAULT_GRAALJS_SCRIPT_STATEMENTS_LIMIT;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.DEFAULT_GRPC_TARGET;
-import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_DYNAMIC_ROUTING_FIELD;
-import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_DYNAMIC_ROUTING_REMOTE_VALUES;
-import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_ENGINE_SELECTION_MODE;
-import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_ENGINE_TYPE;
+import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_ENGINE_MODE;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_GRPC_TARGET;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_SCRIPT_STATEMENTS_LIMIT;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.JSAttributes.JS_FUNC_SELECT_ACR_FROM;
@@ -54,24 +48,21 @@ import static org.wso2.carbon.identity.application.authentication.framework.util
 
 /**
  * Factory for creating JavaScript engines.
- * Supports both local (in-JVM) and remote (sidecar) execution modes.
+ * Supports LOCAL (in-JVM), REMOTE (sidecar via gRPC), and HYBRID (per-request routing) modes.
  * <p>
- * Engine selection can be configured in deployment.toml:
+ * Engine mode can be configured in deployment.toml:
  * <pre>
  * [authentication.adaptive.graaljs]
- * engine_selection_mode = "static"    # "static" or "dynamic"
- * engine_type = "REMOTE"             # For static: "LOCAL" or "REMOTE"
+ * engine_mode = "REMOTE"              # "LOCAL", "REMOTE", or "HYBRID"
  * grpc_target = "localhost:50051"
- * dynamic_routing_field = "serviceProviderName"   # For dynamic mode
- * dynamic_routing_remote_values = "app1,app2"     # For dynamic mode
  * </pre>
+ * <p>
+ * In HYBRID mode, the engine selection is delegated to a {@link ScriptEngineModeResolver}
+ * OSGi service, which can be customized by dropping a bundle into the dropins folder.
  */
 public class JsEngineFactory {
 
     private static final Log log = LogFactory.getLog(JsEngineFactory.class);
-
-    private static final String SELECTION_MODE_DYNAMIC = "dynamic";
-    private static final String ENGINE_TYPE_LOCAL = "LOCAL";
 
     /**
      * Execution mode for JavaScript engine.
@@ -87,20 +78,29 @@ public class JsEngineFactory {
         REMOTE
     }
 
-    // Static mode engine type - defaults to REMOTE (sidecar via gRPC)
-    private ExecutionMode staticEngineType = ExecutionMode.REMOTE;
+    /**
+     * Engine mode configuration value.
+     */
+    public enum EngineMode {
+        /**
+         * All requests use the local in-JVM GraalJS engine.
+         */
+        LOCAL,
+        /**
+         * All requests use the remote sidecar engine via gRPC.
+         */
+        REMOTE,
+        /**
+         * Per-request routing delegated to a {@link ScriptEngineModeResolver} OSGi service.
+         */
+        HYBRID
+    }
 
-    // Engine selection mode: "static" or "dynamic"
-    private String engineSelectionMode = DEFAULT_ENGINE_SELECTION_MODE;
+    // Configured engine mode
+    private EngineMode engineMode = EngineMode.REMOTE;
 
     // Default gRPC target for remote engine (host:port)
     private String grpcTarget = DEFAULT_GRPC_TARGET;
-
-    // For dynamic mode: the AuthenticationContext field to route on
-    private String dynamicRoutingField = "";
-
-    // For dynamic mode: field values that route to REMOTE engine (all others go LOCAL)
-    private Set<String> dynamicRoutingRemoteValues = Collections.emptySet();
 
     // Statement limit for local engine
     private int javascriptResourceLimit = DEFAULT_GRAALJS_SCRIPT_STATEMENTS_LIMIT;
@@ -125,8 +125,6 @@ public class JsEngineFactory {
 
     /**
      * Create a JavaScript engine for the given authentication context.
-     * In static mode, all requests use the configured engine type.
-     * In dynamic mode, the engine is selected per-request based on a field in the AuthenticationContext.
      *
      * @param authenticationContext The authentication context.
      * @return A JsEngine instance configured for the resolved execution mode.
@@ -166,17 +164,13 @@ public class JsEngineFactory {
 
     /**
      * Create a remote (sidecar) JavaScript engine.
-     * Uses the transport factory to create appropriate transport and callback server implementations.
      *
      * @param authenticationContext The authentication context.
      * @return RemoteJsEngine instance.
      */
     public RemoteJsEngine createRemoteEngine(AuthenticationContext authenticationContext) {
 
-        // Create transport configuration based on current settings
         TransportConfig config = createTransportConfig();
-
-        // Use factory to create transport and callback server
         TransportFactory factory = TransportFactory.getInstance();
         RemoteEngineTransport transport = factory.createTransport(config);
         CallbackServer callbackServer = factory.createCallbackServer(config);
@@ -188,24 +182,36 @@ public class JsEngineFactory {
     }
 
     /**
-     * Create transport configuration based on current execution mode and transport type.
+     * Create transport configuration.
      *
      * @return TransportConfig instance.
      */
     private TransportConfig createTransportConfig() {
 
-        // gRPC transport via org.wso2.carbon.identity.application.authentication.framework.grpc OSGi bundle
         return TransportConfig.forGrpc(grpcTarget);
+    }
+
+    /**
+     * Get the configured engine mode.
+     *
+     * @return Current EngineMode.
+     */
+    public EngineMode getEngineMode() {
+
+        return engineMode;
     }
 
     /**
      * Get the current static execution mode.
      *
-     * @return Current ExecutionMode.
+     * @return Current ExecutionMode based on engine mode (LOCAL for LOCAL, REMOTE for REMOTE/HYBRID).
      */
     public static ExecutionMode getCurrentMode() {
 
-        return INSTANCE.staticEngineType;
+        if (INSTANCE.engineMode == EngineMode.LOCAL) {
+            return ExecutionMode.LOCAL;
+        }
+        return ExecutionMode.REMOTE;
     }
 
     /**
@@ -231,17 +237,20 @@ public class JsEngineFactory {
     /**
      * Get the default execution mode.
      *
-     * @return The default ExecutionMode (static engine type).
+     * @return The default ExecutionMode.
      */
     public ExecutionMode getDefaultMode() {
 
-        return staticEngineType;
+        if (engineMode == EngineMode.LOCAL) {
+            return ExecutionMode.LOCAL;
+        }
+        return ExecutionMode.REMOTE;
     }
 
     /**
      * Resolve the execution mode for a given authentication context.
-     * In static mode, returns the configured engine type.
-     * In dynamic mode, inspects the configured AuthenticationContext field.
+     * For LOCAL/REMOTE modes, returns the configured mode directly.
+     * For HYBRID mode, delegates to the {@link ScriptEngineModeResolver} OSGi service.
      * This is the public API that callers (e.g., JsGraalGraphBuilder) should use
      * to determine which code path (local vs remote) to follow.
      *
@@ -294,71 +303,54 @@ public class JsEngineFactory {
 
     /**
      * Resolve which execution mode to use for a given authentication context.
-     * In static mode, returns the configured engine type.
-     * In dynamic mode, inspects the configured AuthenticationContext field and checks
-     * if its value is in the remote-routing set.
+     * <ul>
+     *   <li>LOCAL mode: always returns LOCAL.</li>
+     *   <li>REMOTE mode: always returns REMOTE.</li>
+     *   <li>HYBRID mode: delegates to the {@link ScriptEngineModeResolver} OSGi service.
+     *       Falls back to LOCAL if no resolver is available.</li>
+     * </ul>
      *
      * @param authenticationContext The authentication context (may be null).
      * @return The resolved ExecutionMode.
      */
     private ExecutionMode resolveExecutionMode(AuthenticationContext authenticationContext) {
 
-        // Static mode: always return the configured engine type
-        if (!SELECTION_MODE_DYNAMIC.equalsIgnoreCase(engineSelectionMode)) {
-            return staticEngineType;
+        switch (engineMode) {
+            case LOCAL:
+                return ExecutionMode.LOCAL;
+            case REMOTE:
+                return ExecutionMode.REMOTE;
+            case HYBRID:
+                return resolveHybridMode(authenticationContext);
+            default:
+                return ExecutionMode.REMOTE;
         }
-
-        // Dynamic mode: route based on an AuthenticationContext field value
-        if (authenticationContext == null) {
-            if (log.isDebugEnabled()) {
-                log.debug("[JsEngineFactory] Dynamic mode: authenticationContext is null, falling back to LOCAL");
-            }
-            return ExecutionMode.LOCAL;
-        }
-
-        String fieldValue = extractRoutingFieldValue(authenticationContext);
-        if (fieldValue != null && dynamicRoutingRemoteValues.contains(fieldValue)) {
-            if (log.isDebugEnabled()) {
-                log.debug("[JsEngineFactory] Dynamic routing: field '" + dynamicRoutingField +
-                        "' = '" + fieldValue + "' matched remote values -> REMOTE");
-            }
-            return ExecutionMode.REMOTE;
-        }
-
-        if (log.isDebugEnabled()) {
-            log.debug("[JsEngineFactory] Dynamic routing: field '" + dynamicRoutingField +
-                    "' = '" + fieldValue + "' not in remote values -> LOCAL");
-        }
-        return ExecutionMode.LOCAL;
     }
 
     /**
-     * Extract the value of the configured routing field from the AuthenticationContext.
-     * Supports a fixed set of known fields to avoid reflection.
+     * Resolve execution mode in HYBRID mode by delegating to the OSGi resolver service.
      *
-     * @param authenticationContext The authentication context.
-     * @return The field value, or null if the field is unknown or the value is null.
+     * @param authenticationContext The authentication context (may be null).
+     * @return The resolved ExecutionMode.
      */
-    private String extractRoutingFieldValue(AuthenticationContext authenticationContext) {
+    private ExecutionMode resolveHybridMode(AuthenticationContext authenticationContext) {
 
-        if (dynamicRoutingField == null || dynamicRoutingField.isEmpty()) {
-            return null;
+        ScriptEngineModeResolver resolver =
+                FrameworkServiceDataHolder.getInstance().getScriptEngineModeResolver();
+
+        if (resolver == null) {
+            log.warn("[JsEngineFactory] HYBRID mode configured but no ScriptEngineModeResolver " +
+                    "OSGi service found. Falling back to LOCAL.");
+            return ExecutionMode.LOCAL;
         }
 
-        switch (dynamicRoutingField) {
-            case "serviceProviderName":
-                return authenticationContext.getServiceProviderName();
-            case "tenantDomain":
-                return authenticationContext.getTenantDomain();
-            case "requestType":
-                return authenticationContext.getRequestType();
-            case "callerPath":
-                return authenticationContext.getCallerPath();
-            default:
-                log.warn("[JsEngineFactory] Unknown dynamic routing field: '" + dynamicRoutingField +
-                        "'. Supported fields: serviceProviderName, tenantDomain, requestType, callerPath");
-                return null;
+        ExecutionMode resolved = resolver.resolve(authenticationContext);
+        if (log.isDebugEnabled()) {
+            log.debug("[JsEngineFactory] HYBRID mode resolved to: " + resolved +
+                    " for SP: " + (authenticationContext != null ?
+                    authenticationContext.getServiceProviderName() : "null"));
         }
+        return resolved;
     }
 
     private void initializeFromConfig() {
@@ -375,20 +367,17 @@ public class JsEngineFactory {
             }
         }
 
-        // Read engine selection mode
-        String selectionMode = IdentityUtil.getProperty(GRAALJS_ENGINE_SELECTION_MODE);
-        if (selectionMode != null && !selectionMode.isEmpty()) {
-            engineSelectionMode = selectionMode.trim().toLowerCase();
-        }
-
-        // Read static engine type
-        String engineType = IdentityUtil.getProperty(GRAALJS_ENGINE_TYPE);
-        if (engineType != null && !engineType.isEmpty()) {
-            if (ENGINE_TYPE_LOCAL.equalsIgnoreCase(engineType.trim())) {
-                staticEngineType = ExecutionMode.LOCAL;
-            } else {
-                staticEngineType = ExecutionMode.REMOTE;
+        // Read engine mode (LOCAL, REMOTE, or HYBRID)
+        String mode = IdentityUtil.getProperty(GRAALJS_ENGINE_MODE);
+        if (mode != null && !mode.isEmpty()) {
+            try {
+                engineMode = EngineMode.valueOf(mode.trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                log.warn("Unknown engine mode: '" + mode + "'. Defaulting to " + DEFAULT_ENGINE_MODE);
+                engineMode = EngineMode.valueOf(DEFAULT_ENGINE_MODE);
             }
+        } else {
+            engineMode = EngineMode.valueOf(DEFAULT_ENGINE_MODE);
         }
 
         // Read gRPC target
@@ -397,32 +386,7 @@ public class JsEngineFactory {
             grpcTarget = target.trim();
         }
 
-        // Read dynamic routing config
-        String routingField = IdentityUtil.getProperty(GRAALJS_DYNAMIC_ROUTING_FIELD);
-        if (routingField != null && !routingField.isEmpty()) {
-            dynamicRoutingField = routingField.trim();
-        }
-
-        String remoteValues = IdentityUtil.getProperty(GRAALJS_DYNAMIC_ROUTING_REMOTE_VALUES);
-        if (remoteValues != null && !remoteValues.isEmpty()) {
-            Set<String> values = new HashSet<>();
-            for (String val : remoteValues.split(",")) {
-                String trimmed = val.trim();
-                if (!trimmed.isEmpty()) {
-                    values.add(trimmed);
-                }
-            }
-            dynamicRoutingRemoteValues = Collections.unmodifiableSet(values);
-        }
-
-        // Log final configuration
-        if (SELECTION_MODE_DYNAMIC.equalsIgnoreCase(engineSelectionMode)) {
-            log.info("JsEngineFactory initialized. SelectionMode: dynamic, RoutingField: " +
-                    dynamicRoutingField + ", RemoteValues: " + dynamicRoutingRemoteValues +
-                    ", gRPC Target: " + grpcTarget);
-        } else {
-            log.info("JsEngineFactory initialized. SelectionMode: static, EngineType: " +
-                    staticEngineType + ", gRPC Target: " + grpcTarget);
-        }
+        log.info("JsEngineFactory initialized. EngineMode: " + engineMode +
+                ", gRPC Target: " + grpcTarget);
     }
 }

@@ -82,9 +82,9 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
         jsEngineFactory = JsEngineFactory.getInstance();
         jsEngineFactory.setStatementLimit(javascriptResourceLimit);
 
-        // Log startup mode. Note: in dynamic mode, actual routing is per-request.
-        LOG.info("GraalJS engine abstraction initialized. Static engine type: " +
-                jsEngineFactory.getDefaultMode());
+        // Log startup mode. Note: in HYBRID mode, actual routing is per-request via OSGi resolver.
+        LOG.info("GraalJS engine abstraction initialized. Engine mode: " +
+                jsEngineFactory.getEngineMode());
     }
 
     @SuppressWarnings("unchecked")
