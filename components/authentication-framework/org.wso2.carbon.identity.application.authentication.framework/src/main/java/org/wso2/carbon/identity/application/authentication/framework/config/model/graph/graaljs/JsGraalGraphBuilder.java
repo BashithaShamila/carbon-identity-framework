@@ -225,9 +225,9 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     @Override
     public JsGraalGraphBuilder createWith(String script) {
 
-        // Check if we should use remote execution via sidecar.
+        // Resolve execution mode for this specific authentication context.
         JsEngineFactory jsEngineFactory = JsEngineFactory.getInstance();
-        if (jsEngineFactory.getDefaultMode() == JsEngineFactory.ExecutionMode.REMOTE) {
+        if (jsEngineFactory.resolveMode(authenticationContext) == JsEngineFactory.ExecutionMode.REMOTE) {
             if (log.isDebugEnabled()) {
                 log.debug("[createWith] Using REMOTE execution mode via sidecar");
             }
@@ -989,9 +989,9 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 return jsFunction.getSource();
             }
 
-            // Check if we should use remote execution via sidecar.
+            // Resolve execution mode for this specific authentication context.
             JsEngineFactory jsEngineFactory = JsEngineFactory.getInstance();
-            if (jsEngineFactory.getDefaultMode() == JsEngineFactory.ExecutionMode.REMOTE) {
+            if (jsEngineFactory.resolveMode(authenticationContext) == JsEngineFactory.ExecutionMode.REMOTE) {
                 result = evaluateRemote(authenticationContext, params);
             } else {
                 result = evaluateLocal(authenticationContext, params);

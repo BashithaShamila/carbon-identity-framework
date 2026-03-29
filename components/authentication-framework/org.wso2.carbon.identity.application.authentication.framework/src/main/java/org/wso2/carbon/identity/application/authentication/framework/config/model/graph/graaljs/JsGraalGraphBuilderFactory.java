@@ -82,11 +82,9 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
         jsEngineFactory = JsEngineFactory.getInstance();
         jsEngineFactory.setStatementLimit(javascriptResourceLimit);
 
-        if (jsEngineFactory.getDefaultMode() == JsEngineFactory.ExecutionMode.REMOTE) {
-            LOG.info("GraalJS engine abstraction initialized in REMOTE mode (gRPC)");
-        } else {
-            LOG.info("GraalJS engine abstraction initialized in LOCAL mode");
-        }
+        // Log startup mode. Note: in dynamic mode, actual routing is per-request.
+        LOG.info("GraalJS engine abstraction initialized. Static engine type: " +
+                jsEngineFactory.getDefaultMode());
     }
 
     @SuppressWarnings("unchecked")

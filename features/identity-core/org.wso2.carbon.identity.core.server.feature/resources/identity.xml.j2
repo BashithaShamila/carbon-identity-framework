@@ -4318,6 +4318,26 @@
         <!--Number of statements that can be run with GraalJS script engine on one execution-->
         <GraalJS>
             <ScriptStatementsLimit>{{authentication.adaptive.graaljs.script_statements_limit}}</ScriptStatementsLimit>
+            <!--Engine selection mode: "static" (server-level) or "dynamic" (per-request routing)-->
+            {% if authentication.adaptive.graaljs.engine_selection_mode is defined %}
+            <EngineSelectionMode>{{authentication.adaptive.graaljs.engine_selection_mode}}</EngineSelectionMode>
+            {% endif %}
+            <!--For static mode: "LOCAL" or "REMOTE"-->
+            {% if authentication.adaptive.graaljs.engine_type is defined %}
+            <EngineType>{{authentication.adaptive.graaljs.engine_type}}</EngineType>
+            {% endif %}
+            <!--gRPC target for remote engine (host:port)-->
+            {% if authentication.adaptive.graaljs.grpc_target is defined %}
+            <GrpcTarget>{{authentication.adaptive.graaljs.grpc_target}}</GrpcTarget>
+            {% endif %}
+            <!--For dynamic mode: AuthenticationContext field to route on (e.g., serviceProviderName, tenantDomain)-->
+            {% if authentication.adaptive.graaljs.dynamic_routing_field is defined %}
+            <DynamicRoutingField>{{authentication.adaptive.graaljs.dynamic_routing_field}}</DynamicRoutingField>
+            {% endif %}
+            <!--For dynamic mode: comma-separated field values that route to REMOTE engine-->
+            {% if authentication.adaptive.graaljs.dynamic_routing_remote_values is defined %}
+            <DynamicRoutingRemoteValues>{{authentication.adaptive.graaljs.dynamic_routing_remote_values}}</DynamicRoutingRemoteValues>
+            {% endif %}
         </GraalJS>
 
         <AllowUpdatingAuthenticatedSubject>{{authentication.adaptive.allow_updating_authenticated_subject}}</AllowUpdatingAuthenticatedSubject>
