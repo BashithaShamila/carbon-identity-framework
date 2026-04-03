@@ -55,6 +55,13 @@
             <version>1.2</version>
             <scope>provided</scope>
         </dependency>
+        <!--OSGi core framework (for BundleContext)-->
+        <dependency>
+            <groupId>org.eclipse.osgi</groupId>
+            <artifactId>org.eclipse.osgi</artifactId>
+            <version>3.9.1.v20130814-1242</version>
+            <scope>provided</scope>
+        </dependency>
         <!--OSGi service component (for ComponentContext)-->
         <dependency>
             <groupId>org.osgi</groupId>
@@ -85,6 +92,20 @@
         <dependency>
             <groupId>org.wso2.carbon.identity.framework</groupId>
             <artifactId>org.wso2.carbon.identity.application.authentication.framework</artifactId>
+            <version>${project.parent.version}</version>
+            <scope>provided</scope>
+            <optional>true</optional>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!--Identity core for IdentityUtil config access-->
+        <dependency>
+            <groupId>org.wso2.carbon.identity.framework</groupId>
+            <artifactId>org.wso2.carbon.identity.core</artifactId>
             <version>${project.parent.version}</version>
             <scope>provided</scope>
             <optional>true</optional>
@@ -126,6 +147,7 @@
                             org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine,
                             org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto,
                             org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.grpc,
+                            org.wso2.carbon.identity.core.util; version="${project.parent.version}",
                         </Import-Package>
                     </instructions>
                 </configuration>

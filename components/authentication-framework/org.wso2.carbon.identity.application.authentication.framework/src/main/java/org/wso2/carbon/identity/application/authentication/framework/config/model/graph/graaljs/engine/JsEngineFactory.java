@@ -96,17 +96,18 @@ public class JsEngineFactory {
         HYBRID
     }
 
-    // Configured engine mode
+    // Configured engine mode.
     private EngineMode engineMode = EngineMode.REMOTE;
 
-    // Default gRPC target for remote engine (host:port)
+    // Default gRPC target for remote engine (host:port).
     private String grpcTarget = DEFAULT_GRPC_TARGET;
 
-    // Statement limit for local engine
+    // Statement limit for local engine.
     private int javascriptResourceLimit = DEFAULT_GRAALJS_SCRIPT_STATEMENTS_LIMIT;
 
-    // Singleton instance
-    private static final JsEngineFactory INSTANCE = new JsEngineFactory();
+    // Lazy singleton holder — JsEngineFactory is only created when getInstance() is first called.
+    // This ensures initializeFromConfig() runs after IdentityUtil has been populated.
+    private static volatile JsEngineFactory instance;
 
     private JsEngineFactory() {
 
@@ -114,13 +115,20 @@ public class JsEngineFactory {
     }
 
     /**
-     * Get the singleton instance.
+     * Get the singleton instance. Uses lazy initialization to ensure config is available.
      *
      * @return JsEngineFactory instance.
      */
     public static JsEngineFactory getInstance() {
 
-        return INSTANCE;
+        if (instance == null) {
+            synchronized (JsEngineFactory.class) {
+                if (instance == null) {
+                    instance = new JsEngineFactory();
+                }
+            }
+        }
+        return instance;
     }
 
     /**
@@ -164,31 +172,28 @@ public class JsEngineFactory {
 
     /**
      * Create a remote (sidecar) JavaScript engine.
+     * Gets the gRPC transport from the OSGi service registry via FrameworkServiceDataHolder.
      *
      * @param authenticationContext The authentication context.
      * @return RemoteJsEngine instance.
+     * @throws IllegalStateException if no RemoteEngineTransport OSGi service is available.
      */
     public RemoteJsEngine createRemoteEngine(AuthenticationContext authenticationContext) {
 
-        TransportConfig config = createTransportConfig();
-        TransportFactory factory = TransportFactory.getInstance();
-        RemoteEngineTransport transport = factory.createTransport(config);
-        CallbackServer callbackServer = factory.createCallbackServer(config);
+        RemoteEngineTransport transport =
+                FrameworkServiceDataHolder.getInstance().getRemoteEngineTransport();
+
+        if (transport == null) {
+            throw new IllegalStateException(
+                    "No RemoteEngineTransport OSGi service available. " +
+                    "Ensure the gRPC transport bundle is deployed.");
+        }
 
         if (log.isDebugEnabled()) {
-            log.debug("[JsEngineFactory] Created remote engine with transport: " + config.getType());
+            log.debug("[JsEngineFactory] Created remote engine with transport: " +
+                    transport.getClass().getSimpleName());
         }
-        return new RemoteJsEngine(transport, callbackServer, authenticationContext);
-    }
-
-    /**
-     * Create transport configuration.
-     *
-     * @return TransportConfig instance.
-     */
-    private TransportConfig createTransportConfig() {
-
-        return TransportConfig.forGrpc(grpcTarget);
+        return new RemoteJsEngine(transport, authenticationContext);
     }
 
     /**
@@ -208,7 +213,7 @@ public class JsEngineFactory {
      */
     public static ExecutionMode getCurrentMode() {
 
-        if (INSTANCE.engineMode == EngineMode.LOCAL) {
+        if (getInstance().engineMode == EngineMode.LOCAL) {
             return ExecutionMode.LOCAL;
         }
         return ExecutionMode.REMOTE;
@@ -221,7 +226,7 @@ public class JsEngineFactory {
      */
     public static String getGrpcTarget() {
 
-        return INSTANCE.grpcTarget;
+        return getInstance().grpcTarget;
     }
 
     /**

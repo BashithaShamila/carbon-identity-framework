@@ -18,21 +18,22 @@
 
 package org.wso2.carbon.identity.application.authentication.framework.grpc.internal;
 
-import org.wso2.carbon.identity.application.authentication.framework.grpc.transport.GrpcTransportProvider;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.osgi.service.component.ComponentContext;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.TransportFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineTransport;
+import org.wso2.carbon.identity.application.authentication.framework.grpc.transport.GrpcTransportProvider;
+import org.wso2.carbon.identity.core.util.IdentityUtil;
 
 /**
- * OSGi service component for registering gRPC transport provider with TransportFactory.
+ * OSGi service component for registering gRPC transport as a RemoteEngineTransport service.
  * <p>
- * This component automatically registers the gRPC transport implementation when the bundle
- * is activated, making it available to the authentication framework for remote JavaScript
- * engine communication.
+ * On activation, creates the gRPC streaming transport singleton and registers it
+ * as a RemoteEngineTransport OSGi service, making it available to the authentication
+ * framework for remote JavaScript engine communication.
  */
 @Component(
     name = "org.wso2.carbon.identity.application.authentication.framework.grpc.transport.component",
@@ -41,24 +42,34 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 public class GrpcTransportServiceComponent {
 
     private static final Log log = LogFactory.getLog(GrpcTransportServiceComponent.class);
+    private static final String GRPC_TARGET_CONFIG_KEY = "AdaptiveAuth.GraalJS.GrpcTarget";
+    private static final String DEFAULT_GRPC_TARGET = "localhost:50051";
 
     @Activate
     protected void activate(ComponentContext context) {
-        try {
-            // Register gRPC transport provider with TransportFactory
-            TransportFactory factory = TransportFactory.getInstance();
-            factory.registerProvider("GRPC", new GrpcTransportProvider());
 
-            log.info("[GrpcTransportServiceComponent] gRPC transport provider registered successfully");
+        try {
+            // Read gRPC target directly from config to avoid triggering
+            // JsEngineFactory class loading before IdentityUtil is ready.
+            String grpcTarget = IdentityUtil.getProperty(GRPC_TARGET_CONFIG_KEY);
+            if (grpcTarget == null || grpcTarget.isEmpty()) {
+                grpcTarget = DEFAULT_GRPC_TARGET;
+            }
+            RemoteEngineTransport transport = GrpcTransportProvider.getOrCreateTransport(grpcTarget);
+
+            context.getBundleContext().registerService(
+                    RemoteEngineTransport.class.getName(), transport, null);
+
+            log.info("[GrpcTransportServiceComponent] gRPC transport registered as OSGi service. " +
+                    "Target: " + grpcTarget);
         } catch (Exception e) {
-            log.error("[GrpcTransportServiceComponent] Error registering gRPC transport provider", e);
+            log.error("[GrpcTransportServiceComponent] Error registering gRPC transport", e);
         }
     }
 
     @Deactivate
     protected void deactivate(ComponentContext context) {
+
         log.info("[GrpcTransportServiceComponent] gRPC transport service component deactivated");
-        // Note: We don't unregister the provider on deactivation to avoid breaking existing connections
-        // The framework will handle failures gracefully if the provider becomes unavailable
     }
 }

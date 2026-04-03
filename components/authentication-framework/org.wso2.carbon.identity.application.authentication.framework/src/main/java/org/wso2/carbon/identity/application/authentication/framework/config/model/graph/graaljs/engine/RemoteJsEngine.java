@@ -82,13 +82,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     /**
      * Create a new remote JavaScript engine.
      *
-     * @param transport      The transport layer for communicating with the remote
-     *                       engine.
-     * @param callbackServer The callback server (unused in streaming mode, kept for API compat).
-     * @param authContext    The authentication context for this session.
+     * @param transport   The transport layer for communicating with the remote engine.
+     * @param authContext The authentication context for this session.
      */
-    public RemoteJsEngine(RemoteEngineTransport transport, CallbackServer callbackServer,
-            AuthenticationContext authContext) {
+    public RemoteJsEngine(RemoteEngineTransport transport, AuthenticationContext authContext) {
         this.transport = transport;
         this.authContext = authContext;
         this.sessionId = UUID.randomUUID().toString();
@@ -679,7 +676,8 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      * This navigates the property path and sets the value on the target object.
      * Supports paths like:
      * "steps::1::subject::claims::http://wso2.org/claims/email"
-     * Also supports host function return references via "__hostref__" prefix.
+     * Also supports host function return references via "__hostref__" prefix and
+     * proxy object references via "__proxyref__" prefix.
      */
     @Override
     public boolean setContextProperty(String propertyPath, Object value) throws Exception {
@@ -688,7 +686,13 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     (value != null ? value.getClass().getSimpleName() : "null") + ", session: " + sessionId);
         }
 
-        // Handle host function return references
+        // Handle proxy object references (list elements from host function returns).
+        if (propertyPath.startsWith(RemoteEngineConstants.PROXY_REF_PREFIX)) {
+            return proxyReferenceCache.setProxyObjectProperty(
+                    propertyPath.substring(RemoteEngineConstants.PROXY_REF_PREFIX.length()), value);
+        }
+
+        // Handle host function return references.
         if (propertyPath.startsWith(RemoteEngineConstants.HOST_REF_PREFIX)) {
             return proxyReferenceCache.setHostRefProperty(
                     propertyPath.substring(RemoteEngineConstants.HOST_REF_PREFIX.length()), value);

@@ -224,6 +224,33 @@ public class ProtobufSerializer {
             }
         }
 
+
+        if (ProxyTypeResolver.isJsWrapperProxy(serializable)) {
+            Map<String, Object> cache = getSessionProxyCache();
+            if (cache != null) {
+                String referenceId = java.util.UUID.randomUUID().toString();
+                cache.put(referenceId, serializable);
+
+                String proxyType = ProxyTypeResolver.getJsWrapperProxyType(serializable);
+                System.out.println("Created explicit proxy marker for nested JS Wrapper: " +
+                            serializable.getClass().getName() + " with referenceId: " + referenceId);
+//                if (log.isDebugEnabled()) {
+//                    log.debug("Created explicit proxy marker for nested JS Wrapper: " +
+//                            serializable.getClass().getName() + " with referenceId: " + referenceId);
+//                }
+
+                return SerializedValue.newBuilder()
+                        .setProxyObject(SerializedProxyObject.newBuilder()
+                                .setType(proxyType)
+                                .setReferenceId(referenceId)
+                                .build())
+                        .build();
+            } else {
+                log.warn("Proxy cache not set, cannot create proxy marker for JS Wrapper: " +
+                        serializable.getClass().getName());
+            }
+        }
+
         // Generic POJO handling: Use LAZY PROXY pattern instead of eager introspection.
         // This is CRITICAL for arrays of complex objects (e.g., getUsersWithClaimValues
         // returning 100 User objects). Eagerly introspecting all getters triggers

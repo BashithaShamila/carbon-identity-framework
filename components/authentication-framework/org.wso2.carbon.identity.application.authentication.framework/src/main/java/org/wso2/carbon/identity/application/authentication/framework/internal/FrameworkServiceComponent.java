@@ -53,6 +53,7 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JSExecutionSupervisor;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsFunctionRegistryImpl;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericGraphBuilderFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineTransport;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ScriptEngineModeResolver;
 import org.wso2.carbon.identity.application.authentication.framework.dao.impl.CacheBackedLongWaitStatusDAO;
 import org.wso2.carbon.identity.application.authentication.framework.dao.impl.LongWaitStatusDAOImpl;
@@ -1170,6 +1171,25 @@ public class FrameworkServiceComponent {
 
         FrameworkServiceDataHolder.getInstance().setOrganizationDiscoveryHandler(null);
         log.debug("OrganizationDiscoveryHandler unset in FrameworkServiceComponent bundle.");
+    }
+
+    @Reference(
+            name = "remote.engine.transport",
+            service = RemoteEngineTransport.class,
+            cardinality = ReferenceCardinality.OPTIONAL,
+            policy = ReferencePolicy.DYNAMIC,
+            unbind = "unsetRemoteEngineTransport"
+    )
+    protected void setRemoteEngineTransport(RemoteEngineTransport transport) {
+
+        FrameworkServiceDataHolder.getInstance().setRemoteEngineTransport(transport);
+        log.info("RemoteEngineTransport set: " + transport.getClass().getName());
+    }
+
+    protected void unsetRemoteEngineTransport(RemoteEngineTransport transport) {
+
+        FrameworkServiceDataHolder.getInstance().setRemoteEngineTransport(null);
+        log.info("RemoteEngineTransport unset.");
     }
 
     @Reference(

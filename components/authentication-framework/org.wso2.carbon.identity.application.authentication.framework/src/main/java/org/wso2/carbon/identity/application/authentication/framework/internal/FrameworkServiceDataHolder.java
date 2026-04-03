@@ -32,6 +32,7 @@ import org.wso2.carbon.identity.application.authentication.framework.config.load
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JSExecutionSupervisor;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsBaseGraphBuilderFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericGraphBuilderFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineTransport;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ScriptEngineModeResolver;
 import org.wso2.carbon.identity.application.authentication.framework.exception.FrameworkException;
 import org.wso2.carbon.identity.application.authentication.framework.handler.approles.ApplicationRolesResolver;
@@ -129,6 +130,7 @@ public class FrameworkServiceDataHolder {
     private UserDefinedAuthenticatorService userDefinedAuthenticatorService;
     private OrganizationDiscoveryHandler organizationDiscoveryHandler;
     private ScriptEngineModeResolver scriptEngineModeResolver;
+    private RemoteEngineTransport remoteEngineTransport;
 
     private FrameworkServiceDataHolder() {
 
@@ -865,5 +867,15 @@ public class FrameworkServiceDataHolder {
     public void setScriptEngineModeResolver(ScriptEngineModeResolver scriptEngineModeResolver) {
 
         this.scriptEngineModeResolver = scriptEngineModeResolver;
+    }
+
+    public RemoteEngineTransport getRemoteEngineTransport() {
+
+        return remoteEngineTransport;
+    }
+
+    public void setRemoteEngineTransport(RemoteEngineTransport remoteEngineTransport) {
+
+        this.remoteEngineTransport = remoteEngineTransport;
     }
 }

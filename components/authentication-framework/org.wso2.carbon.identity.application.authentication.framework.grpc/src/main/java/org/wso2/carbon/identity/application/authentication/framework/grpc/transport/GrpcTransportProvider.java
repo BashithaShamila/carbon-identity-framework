@@ -20,100 +20,47 @@ package org.wso2.carbon.identity.application.authentication.framework.grpc.trans
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.CallbackServer;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineTransport;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.TransportConfig;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.TransportFactory;
 
 /**
- * Provider for gRPC transport implementation.
+ * Provider for gRPC streaming transport singleton.
  * <p>
- * This provider is registered with the TransportFactory via OSGi service activation,
- * making gRPC transport available to the authentication framework without requiring
- * compile-time dependencies on gRPC libraries in the framework jar.
- * <p>
- * Uses singleton pattern for callback server to ensure all RemoteJsEngine instances
- * share the same callback server instance and session handlers are properly registered.
+ * Creates and manages a single {@link GrpcStreamingTransportImpl} instance
+ * that implements {@link RemoteEngineTransport}. Uses double-checked locking
+ * for thread-safe lazy initialization.
  */
-public class GrpcTransportProvider implements TransportFactory.TransportProvider {
+public class GrpcTransportProvider {
 
     private static final Log log = LogFactory.getLog(GrpcTransportProvider.class);
 
     private static volatile GrpcStreamingTransportImpl streamingInstance;
     private static final Object lock = new Object();
-    private static int transportInstanceCount = 0;
 
-    @Override
-    public RemoteEngineTransport createTransport(TransportConfig config) {
-        transportInstanceCount++;
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] ========== createTransport() CALLED ==========");
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] Transport instance #" + transportInstanceCount);
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] Config details - grpcTarget: " + config.getGrpcTarget());
-        }
-
-        String grpcTarget = config.getGrpcTarget();
-        if (grpcTarget == null || grpcTarget.isEmpty()) {
-            log.error("[GrpcTransportProvider] ERROR: gRPC target is null or empty!");
-            throw new IllegalArgumentException("gRPC target is required for GRPC transport");
-        }
-
-        // Use singleton streaming transport (implements both transport and callback server)
-        GrpcStreamingTransportImpl instance = getOrCreateStreamingInstance(grpcTarget);
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] Returning streaming transport, hashCode=" +
-                    System.identityHashCode(instance));
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] ========== createTransport() COMPLETED ==========");
-        }
-        return instance;
+    private GrpcTransportProvider() {
+        // Utility class
     }
 
-    @Override
-    public CallbackServer createCallbackServer(TransportConfig config) {
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] ========== createCallbackServer() CALLED ==========");
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] Config details - grpcTarget: " + config.getGrpcTarget());
-        }
+    /**
+     * Get or create the singleton gRPC streaming transport.
+     *
+     * @param grpcTarget gRPC target address (host:port).
+     * @return The singleton RemoteEngineTransport instance.
+     * @throws IllegalArgumentException if grpcTarget is null or empty.
+     */
+    public static RemoteEngineTransport getOrCreateTransport(String grpcTarget) {
 
-        String grpcTarget = config.getGrpcTarget();
         if (grpcTarget == null || grpcTarget.isEmpty()) {
-            log.error("[GrpcTransportProvider] ERROR: gRPC target is null or empty!");
-            throw new IllegalArgumentException("gRPC target is required for GRPC transport");
+            throw new IllegalArgumentException("gRPC target is required for gRPC transport");
         }
 
-        // Return same streaming transport instance (it implements CallbackServer too)
-        GrpcStreamingTransportImpl instance = getOrCreateStreamingInstance(grpcTarget);
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] Returning streaming transport as callback server, hashCode=" +
-                    System.identityHashCode(instance));
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcTransportProvider] ========== createCallbackServer() COMPLETED ==========");
-        }
-        return instance;
-    }
-
-    private static GrpcStreamingTransportImpl getOrCreateStreamingInstance(String grpcTarget) {
         if (streamingInstance == null) {
             synchronized (lock) {
                 if (streamingInstance == null) {
                     if (log.isDebugEnabled()) {
-                        log.debug("[GrpcTransportProvider] Creating NEW GrpcStreamingTransportImpl for target: " +
-                                grpcTarget);
+                        log.debug("[GrpcTransportProvider] Creating GrpcStreamingTransportImpl " +
+                                "for target: " + grpcTarget);
                     }
                     streamingInstance = new GrpcStreamingTransportImpl(grpcTarget);
-                    if (log.isDebugEnabled()) {
-                        log.debug("[GrpcTransportProvider] NEW singleton created, hashCode=" +
-                                System.identityHashCode(streamingInstance));
-                    }
                 }
             }
         }

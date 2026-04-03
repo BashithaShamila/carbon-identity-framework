@@ -140,6 +140,33 @@ class ProxyReferenceCache {
     }
 
     /**
+     * Set a property on a cached proxy object.
+     * Path format: "&lt;referenceId&gt;::&lt;property&gt;" or
+     * "&lt;referenceId&gt;::&lt;property&gt;::&lt;nestedProperty&gt;..."
+     *
+     * @param path  The path containing referenceId and property segments.
+     * @param value The value to set.
+     * @return true if the property was successfully set, false otherwise.
+     */
+    boolean setProxyObjectProperty(String path, Object value) {
+
+        String[] parts = path.split(RemoteEngineConstants.PATH_SEPARATOR);
+        if (parts.length < 2) {
+            log.warn("[RemoteJsEngine] setProxyObjectProperty requires at least refId and property: " + path);
+            return false;
+        }
+
+        String refId = parts[0];
+        Object root = proxyObjectCache.get(refId);
+        if (root == null) {
+            log.warn("[RemoteJsEngine] No proxy object found for reference ID: " + refId);
+            return false;
+        }
+
+        return PropertyPathNavigator.setProperty(parts, 1, root, value);
+    }
+
+    /**
      * Get the proxy object cache map.
      * Used by transport layer to set ThreadLocal before serialization.
      *
