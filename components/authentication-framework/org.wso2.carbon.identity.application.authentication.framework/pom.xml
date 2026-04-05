@@ -265,30 +265,26 @@
             <version>3.21.12</version>
             <scope>provided</scope>
         </dependency>
-        <!-- gRPC Dependencies for gRPC transport (provided scope - not bundled) -->
+        <!-- gRPC Dependencies - embedded in bundle for standalone transport -->
         <dependency>
             <groupId>io.grpc</groupId>
             <artifactId>grpc-netty-shaded</artifactId>
             <version>1.51.1</version>
-            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>io.grpc</groupId>
             <artifactId>grpc-protobuf</artifactId>
             <version>1.51.1</version>
-            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>io.grpc</groupId>
             <artifactId>grpc-stub</artifactId>
             <version>1.51.1</version>
-            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>io.grpc</groupId>
             <artifactId>grpc-services</artifactId>
             <version>1.51.1</version>
-            <scope>provided</scope>
         </dependency>
     </dependencies>
 
@@ -352,7 +348,13 @@
                     <instructions>
                         <Bundle-SymbolicName>${project.artifactId}</Bundle-SymbolicName>
                         <Bundle-Name>${project.artifactId}</Bundle-Name>
-                        <Private-Package>org.wso2.carbon.identity.application.authentication.framework.internal
+                        <Private-Package>
+                            org.wso2.carbon.identity.application.authentication.framework.internal,
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server,
+                            io.grpc.*,
+                            com.google.protobuf.*,
+                            com.google.common.util.concurrent.*,
+                            io.perfmark.*
                         </Private-Package>
                         <Import-Package>
                             javax.xml.namespace,
@@ -405,10 +407,9 @@
                             org.wso2.carbon.identity.configuration.mgt.core.model; version="${carbon.identity.package.import.version.range}",
                             org.wso2.carbon.identity.role.v2.mgt.core; version="${carbon.identity.package.import.version.range}",
                             org.newsclub.net.unix.*; version="[2.9.0,3.0.0)"; resolution:=optional,
-                            com.google.protobuf.*; version="[3.21.0,4.0.0)"; resolution:=optional,
-                            io.grpc.*; version="[1.51.0,2.0.0)"; resolution:=optional,
                         </Import-Package>
                         <Export-Package>!org.wso2.carbon.identity.application.authentication.framework.internal,
+                            !org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server,
                             org.wso2.carbon.identity.application.authentication.framework.*;
                             version="${carbon.identity.package.export.version}",
                             org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto;

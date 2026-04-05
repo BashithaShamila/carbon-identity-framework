@@ -33,6 +33,7 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticatedUser;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.handler.sequence.impl.GraalSelectAcrFromFunction;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server.GrpcTransportProvider;
 import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 
@@ -172,26 +173,18 @@ public class JsEngineFactory {
 
     /**
      * Create a remote (sidecar) JavaScript engine.
-     * Gets the gRPC transport from the OSGi service registry via FrameworkServiceDataHolder.
+     * Uses the embedded gRPC transport provider directly within the same bundle.
      *
      * @param authenticationContext The authentication context.
      * @return RemoteJsEngine instance.
-     * @throws IllegalStateException if no RemoteEngineTransport OSGi service is available.
      */
     public RemoteJsEngine createRemoteEngine(AuthenticationContext authenticationContext) {
 
-        RemoteEngineTransport transport =
-                FrameworkServiceDataHolder.getInstance().getRemoteEngineTransport();
-
-        if (transport == null) {
-            throw new IllegalStateException(
-                    "No RemoteEngineTransport OSGi service available. " +
-                    "Ensure the gRPC transport bundle is deployed.");
-        }
+        RemoteEngineTransport transport = GrpcTransportProvider.getOrCreateTransport(grpcTarget);
 
         if (log.isDebugEnabled()) {
             log.debug("[JsEngineFactory] Created remote engine with transport: " +
-                    transport.getClass().getSimpleName());
+                    transport.getClass().getSimpleName() + ", target: " + grpcTarget);
         }
         return new RemoteJsEngine(transport, authenticationContext);
     }
