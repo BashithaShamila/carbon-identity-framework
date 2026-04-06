@@ -23,28 +23,15 @@ import io.grpc.stub.StreamObserver;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.CallbackServer;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ProxyTypeResolver;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineConstants;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ProtobufSerializer;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineTransport;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyRequest;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyResponse;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertySetRequest;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertySetResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.EvaluateRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.EvaluateResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ExecuteCallbackRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ExecuteCallbackResponse;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionRequest;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionResponse;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedProxyObject;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedValue;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.StreamMessage;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.grpc.JsEngineStreamingServiceGrpc;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -56,19 +43,23 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Bidirectional streaming gRPC transport implementation.
- * Implements both RemoteEngineTransport (for sending requests) and CallbackServer
- * (for receiving callbacks) over a per-session bidirectional gRPC stream.
+ * Manages per-session HTTP/2 stream lifecycle for script evaluation and callback execution.
  * <p>
- * Each sendEvaluate()/sendExecuteCallback() call opens its own HTTP/2 stream.
- * This gives each session its own lock, its own stream lifecycle, and avoids
- * contention between concurrent sessions. The stream closes after the response
- * is received (between async authentication steps).
+ * Each {@link #sendEvaluate(EvaluateRequest, HostFunctionHandler)} /
+ * {@link #sendExecuteCallback(ExecuteCallbackRequest, HostFunctionHandler)} call opens its own
+ * HTTP/2 stream. This gives each session its own lock, its own stream lifecycle, and avoids
+ * contention between concurrent sessions. The stream closes after the response is received.
+ * <p>
+ * Sidecar callback handling (host functions, context property get/set) is delegated to
+ * {@link SidecarCallbackHandler}, keeping this class focused on stream mechanics.
  * <p>
  * Thread model:
- * - IS HTTP thread calls sendEvaluate()/sendExecuteCallback() and blocks on CompletableFuture
- * - gRPC event thread receives StreamMessage via onNext()
- * - Callback executor handles host function/context property requests
- * - All sends to a session's stream are synchronized via that session's lock
+ * <ul>
+ *   <li>IS HTTP thread calls sendEvaluate()/sendExecuteCallback() and blocks on CompletableFuture</li>
+ *   <li>gRPC event thread receives StreamMessage via onNext() and dispatches to callback executor</li>
+ *   <li>Callback executor invokes {@link SidecarCallbackHandler} methods</li>
+ *   <li>All sends to a session's stream are synchronized via that session's lock</li>
+ * </ul>
  */
 public class GrpcStreamingTransportImpl implements RemoteEngineTransport, CallbackServer {
 
@@ -79,6 +70,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     private final GrpcConnectionManager connectionManager;
     private final String correlationId;
     private final ExecutorService callbackExecutor = Executors.newCachedThreadPool();
+    private final SidecarCallbackHandler callbackHandler = new SidecarCallbackHandler();
 
     public GrpcStreamingTransportImpl(String grpcTarget) {
         this(grpcTarget, 5);
@@ -304,11 +296,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         // Per-session cleanup is handled by stream onCompleted() in finally.
     }
 
-    // ============ Private Helpers ============
+    // ============ Stream Observer Factory ============
 
     /**
      * Creates a StreamObserver that handles incoming messages from the sidecar.
-     * Routes to the appropriate handler based on message type.
+     * Routes terminal responses (evaluate/callback) to their CompletableFuture.
+     * Routes sidecar callbacks (host function, context property) to {@link SidecarCallbackHandler}
+     * via the callback executor.
      * <p>
      * The handler and outbound stream reference are captured in the closure, eliminating the need
      * for session-based lookup maps (sessionHandlers, streamRegistry) from the two-channel design.
@@ -359,7 +353,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                                 " receivedTs=" + now +
                                 " sinceStreamStartMs=" + (now - streamStartTime));
                         callbackExecutor.submit(() ->
-                                handleHostFunctionRequest(sessionId,
+                                callbackHandler.handleHostFunction(sessionId,
                                         message.getHostFunctionRequest(),
                                         handler, outboundRef.get(), streamLock));
                         break;
@@ -371,7 +365,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                                 " receivedTs=" + now +
                                 " sinceStreamStartMs=" + (now - streamStartTime));
                         callbackExecutor.submit(() ->
-                                handleContextPropertyRequest(sessionId,
+                                callbackHandler.handleContextProperty(sessionId,
                                         message.getContextPropertyRequest(),
                                         handler, outboundRef.get(), streamLock));
                         break;
@@ -383,7 +377,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                                 " receivedTs=" + now +
                                 " sinceStreamStartMs=" + (now - streamStartTime));
                         callbackExecutor.submit(() ->
-                                handleContextPropertySetRequest(sessionId,
+                                callbackHandler.handleContextPropertySet(sessionId,
                                         message.getContextPropertySetRequest(),
                                         handler, outboundRef.get(), streamLock));
                         break;
@@ -432,246 +426,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         };
     }
 
-    /**
-     * Handle a host function request from the sidecar.
-     * Invokes the handler and sends the response back on the stream.
-     * Handler and outbound stream are passed directly from the stream closure (no map lookups).
-     */
-    private void handleHostFunctionRequest(String sessionId, HostFunctionRequest request,
-                                            HostFunctionHandler handler,
-                                            StreamObserver<StreamMessage> outbound, Object lock) {
-        String functionName = request.getFunctionName();
-        long hfStart = System.currentTimeMillis();
-        System.out.println("[PERF] [" + hfStart + "] IS HOST_FN_HANDLE_START session=" + sessionId +
-                " fn=" + functionName + " handleStartTs=" + hfStart);
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcStreaming] handleHostFunction: " + functionName + ", session: " + sessionId);
-        }
-
-        try {
-            // Deserialize arguments
-            List<Object> args = new ArrayList<>();
-            for (SerializedValue sv : request.getArgumentsList()) {
-                args.add(ProtobufSerializer.fromProto(sv));
-            }
-
-            // Invoke host function
-            long hfExecStart = System.currentTimeMillis();
-            Object result = handler.invokeHostFunction(functionName, args.toArray());
-            long hfExecEnd = System.currentTimeMillis();
-            System.out.println("[PERF] [" + hfExecEnd + "] IS HOST_FN_EXECUTED session=" + sessionId +
-                    " fn=" + functionName +
-                    " handleStartTs=" + hfStart + " deserEndTs=" + hfExecStart +
-                    " execStartTs=" + hfExecStart + " execEndTs=" + hfExecEnd +
-                    " deserMs=" + (hfExecStart - hfStart) +
-                    " execMs=" + (hfExecEnd - hfExecStart) +
-                    " totalMs=" + (hfExecEnd - hfStart));
-            if (log.isDebugEnabled()) {
-                log.debug("[GrpcStreaming] Host function " + functionName + " returned: " +
-                        (result != null ? result.getClass().getSimpleName() : "null"));
-            }
-
-            // Serialize result: use proxy object for complex types, primitive serialization otherwise
-            SerializedValue serializedResult;
-            if (result != null && ProxyTypeResolver.isJsWrapperProxy(result)) {
-                String refId = handler.storeObjectReference(result);
-                String proxyType = ProxyTypeResolver.getJsWrapperProxyType(result);
-                if (log.isDebugEnabled()) {
-                    log.debug("[GrpcStreaming] Serializing complex result as proxy: type=" + proxyType +
-                            ", refId=" + refId);
-                }
-                serializedResult = SerializedValue.newBuilder()
-                        .setProxyObject(SerializedProxyObject.newBuilder()
-                                .setType(proxyType)
-                                .setReferenceId(refId != null ? refId : "")
-                                .build())
-                        .build();
-            } else {
-                // CRITICAL FIX: Set proxy cache ThreadLocal before serialization
-                // This enables lazy-loading proxy pattern for complex objects (e.g., User arrays)
-                if (handler instanceof org.wso2.carbon.identity.application.authentication.framework
-                        .config.model.graph.graaljs.engine.RemoteJsEngine) {
-                    org.wso2.carbon.identity.application.authentication.framework
-                            .config.model.graph.graaljs.engine.RemoteJsEngine remoteEngine =
-                            (org.wso2.carbon.identity.application.authentication.framework
-                                    .config.model.graph.graaljs.engine.RemoteJsEngine) handler;
-                    java.util.Map<String, Object> proxyCache = remoteEngine.getProxyObjectCache();
-                    System.out.println("[GrpcStreaming] Setting proxy cache ThreadLocal - cache size: " +
-                            (proxyCache != null ? proxyCache.size() : "NULL"));
-                    ProtobufSerializer.setSessionProxyCache(proxyCache);
-                }
-                try {
-                    serializedResult = ProtobufSerializer.toProto(result);
-                } finally {
-                    ProtobufSerializer.clearSessionProxyCache();
-                }
-            }
-
-            // Send response back on stream
-            long hfSerEnd = System.currentTimeMillis();
-            sendOnStream(outbound, lock, StreamMessage.newBuilder()
-                    .setSessionId(sessionId)
-                    .setHostFunctionResponse(HostFunctionResponse.newBuilder()
-                            .setSuccess(true)
-                            .setResult(serializedResult)
-                            .build())
-                    .build());
-            long hfSentTs = System.currentTimeMillis();
-            System.out.println("[PERF] [" + hfSentTs + "] IS HOST_FN_RESPONSE_SENT session=" +
-                    sessionId + " fn=" + functionName +
-                    " handleStartTs=" + hfStart + " execEndTs=" + hfExecEnd +
-                    " serEndTs=" + hfSerEnd + " sentTs=" + hfSentTs +
-                    " serMs=" + (hfSerEnd - hfExecEnd) + " sendMs=" + (hfSentTs - hfSerEnd) +
-                    " totalHandleMs=" + (hfSentTs - hfStart));
-
-        } catch (Exception e) {
-            log.error("[GrpcStreaming] Error in host function " + functionName, e);
-            sendOnStream(outbound, lock, StreamMessage.newBuilder()
-                    .setSessionId(sessionId)
-                    .setHostFunctionResponse(HostFunctionResponse.newBuilder()
-                            .setSuccess(false)
-                            .setErrorMessage(e.getMessage() != null ? e.getMessage() : e.getClass().getName())
-                            .build())
-                    .build());
-        }
-    }
-
-    /**
-     * Handle a context property request from the sidecar.
-     * Handler and outbound stream are passed directly from the stream closure (no map lookups).
-     */
-    private void handleContextPropertyRequest(String sessionId, ContextPropertyRequest request,
-                                               HostFunctionHandler handler,
-                                               StreamObserver<StreamMessage> outbound, Object lock) {
-        String propertyPath = request.getPropertyPath();
-        long cpStart = System.currentTimeMillis();
-        System.out.println("[PERF] [" + cpStart + "] IS CTX_PROP_HANDLE_START session=" + sessionId +
-                " path=" + propertyPath + " handleStartTs=" + cpStart);
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcStreaming] handleContextProperty: " + propertyPath + ", session: " + sessionId);
-        }
-
-        try {
-            long cpExecStart = System.currentTimeMillis();
-            Object value = handler.getContextProperty(propertyPath);
-            long cpExecEnd = System.currentTimeMillis();
-
-            ContextPropertyResponse.Builder responseBuilder = ContextPropertyResponse.newBuilder()
-                    .setSuccess(true);
-
-            // Handle __keys__ special path - value is the member keys array
-            if (propertyPath.endsWith(RemoteEngineConstants.PATH_SEPARATOR + RemoteEngineConstants.KEYS_PROPERTY) || RemoteEngineConstants.KEYS_PROPERTY.equals(propertyPath)) {
-                if (value != null) {
-                    extractMemberKeys(value, responseBuilder);
-                }
-                sendOnStream(outbound, lock, StreamMessage.newBuilder()
-                        .setSessionId(sessionId)
-                        .setContextPropertyResponse(responseBuilder.build())
-                        .build());
-                return;
-            }
-
-            if (value != null) {
-                boolean isProxy = ProxyTypeResolver.isJsWrapperProxy(value);
-                responseBuilder.setIsProxy(isProxy);
-
-                if (isProxy) {
-                    responseBuilder.setProxyType(ProxyTypeResolver.getJsWrapperProxyType(value));
-                    if (value instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-                        Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) value).getMemberKeys();
-                        extractMemberKeys(keys, responseBuilder);
-                    }
-                } else {
-                    responseBuilder.setValue(ProtobufSerializer.toProto(value));
-                }
-            }
-
-            sendOnStream(outbound, lock, StreamMessage.newBuilder()
-                    .setSessionId(sessionId)
-                    .setContextPropertyResponse(responseBuilder.build())
-                    .build());
-            long cpSentTs = System.currentTimeMillis();
-            System.out.println("[PERF] [" + cpSentTs + "] IS CTX_PROP_RESPONSE_SENT session=" +
-                    sessionId + " path=" + propertyPath +
-                    " handleStartTs=" + cpStart + " execStartTs=" + cpExecStart +
-                    " execEndTs=" + cpExecEnd + " sentTs=" + cpSentTs +
-                    " execMs=" + (cpExecEnd - cpExecStart) +
-                    " serMs=" + (cpSentTs - cpExecEnd) +
-                    " totalMs=" + (cpSentTs - cpStart));
-
-        } catch (Exception e) {
-            log.error("[GrpcStreaming] Error getting context property: " + propertyPath, e);
-            sendOnStream(outbound, lock, StreamMessage.newBuilder()
-                    .setSessionId(sessionId)
-                    .setContextPropertyResponse(ContextPropertyResponse.newBuilder()
-                            .setSuccess(false)
-                            .setErrorMessage(e.getMessage())
-                            .build())
-                    .build());
-        }
-    }
-
-    /**
-     * Handle a context property set request from the sidecar.
-     * Handler and outbound stream are passed directly from the stream closure (no map lookups).
-     */
-    private void handleContextPropertySetRequest(String sessionId, ContextPropertySetRequest request,
-                                                  HostFunctionHandler handler,
-                                                  StreamObserver<StreamMessage> outbound, Object lock) {
-        String propertyPath = request.getPropertyPath();
-        long cpsStart = System.currentTimeMillis();
-        System.out.println("[PERF] [" + cpsStart + "] IS CTX_PROP_SET_HANDLE_START session=" + sessionId +
-                " path=" + propertyPath + " handleStartTs=" + cpsStart);
-        if (log.isDebugEnabled()) {
-            log.debug("[GrpcStreaming] handleContextPropertySet: " + propertyPath + ", session: " + sessionId);
-        }
-
-        try {
-            long cpsDeserStart = System.currentTimeMillis();
-            Object javaValue = ProtobufSerializer.fromProto(request.getValue());
-            long cpsExecStart = System.currentTimeMillis();
-            boolean success = handler.setContextProperty(propertyPath, javaValue);
-            long cpsExecEnd = System.currentTimeMillis();
-
-            sendOnStream(outbound, lock, StreamMessage.newBuilder()
-                    .setSessionId(sessionId)
-                    .setContextPropertySetResponse(ContextPropertySetResponse.newBuilder()
-                            .setSuccess(success)
-                            .build())
-                    .build());
-            long cpsSentTs = System.currentTimeMillis();
-            System.out.println("[PERF] [" + cpsSentTs + "] IS CTX_PROP_SET_RESPONSE_SENT session=" +
-                    sessionId + " path=" + propertyPath +
-                    " handleStartTs=" + cpsStart + " deserStartTs=" + cpsDeserStart +
-                    " execStartTs=" + cpsExecStart + " execEndTs=" + cpsExecEnd +
-                    " sentTs=" + cpsSentTs +
-                    " deserMs=" + (cpsExecStart - cpsDeserStart) +
-                    " execMs=" + (cpsExecEnd - cpsExecStart) +
-                    " sendMs=" + (cpsSentTs - cpsExecEnd) +
-                    " totalMs=" + (cpsSentTs - cpsStart));
-
-        } catch (Exception e) {
-            log.error("[GrpcStreaming] Error setting context property: " + propertyPath, e);
-            sendOnStream(outbound, lock, StreamMessage.newBuilder()
-                    .setSessionId(sessionId)
-                    .setContextPropertySetResponse(ContextPropertySetResponse.newBuilder()
-                            .setSuccess(false)
-                            .setErrorMessage(e.getMessage())
-                            .build())
-                    .build());
-        }
-    }
-
-    /** Thread-safe send on stream. Outbound stream and lock passed directly (no StreamContext map lookup). */
-    private void sendOnStream(StreamObserver<StreamMessage> outbound, Object lock, StreamMessage message) {
-        synchronized (lock) {
-            try {
-                outbound.onNext(message);
-            } catch (Exception e) {
-                log.error("[GrpcStreaming] Error sending on stream: " + e.getMessage());
-            }
-        }
-    }
+    // ============ Channel Management ============
 
     /**
      * Get a stub for a round-robin selected channel from the pool.
@@ -682,43 +437,5 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     private JsEngineStreamingServiceGrpc.JsEngineStreamingServiceStub getStub() {
         ManagedChannel channel = connectionManager.getClientChannel(grpcTarget);
         return JsEngineStreamingServiceGrpc.newStub(channel);
-    }
-
-    // Proxy type detection and name extraction delegated to ProxyTypeResolver
-
-    private void extractMemberKeys(Object keys, ContextPropertyResponse.Builder responseBuilder) {
-        if (keys instanceof String[]) {
-            for (String key : (String[]) keys) {
-                responseBuilder.addMemberKeys(key);
-            }
-        } else if (keys instanceof Object[]) {
-            for (Object key : (Object[]) keys) {
-                if (key instanceof String[]) {
-                    for (String s : (String[]) key) {
-                        responseBuilder.addMemberKeys(s);
-                    }
-                } else {
-                    responseBuilder.addMemberKeys(String.valueOf(key));
-                }
-            }
-        } else if (keys instanceof org.graalvm.polyglot.proxy.ProxyArray) {
-            org.graalvm.polyglot.proxy.ProxyArray proxyArray =
-                    (org.graalvm.polyglot.proxy.ProxyArray) keys;
-            long size = proxyArray.getSize();
-            for (long i = 0; i < size; i++) {
-                Object element = proxyArray.get(i);
-                if (element instanceof String[]) {
-                    for (String s : (String[]) element) {
-                        responseBuilder.addMemberKeys(s);
-                    }
-                } else if (element instanceof Object[]) {
-                    for (Object o : (Object[]) element) {
-                        responseBuilder.addMemberKeys(String.valueOf(o));
-                    }
-                } else {
-                    responseBuilder.addMemberKeys(String.valueOf(element));
-                }
-            }
-        }
     }
 }
