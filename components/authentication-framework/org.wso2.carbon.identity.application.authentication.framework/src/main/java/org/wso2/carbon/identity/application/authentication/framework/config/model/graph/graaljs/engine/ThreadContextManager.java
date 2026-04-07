@@ -100,13 +100,13 @@ class ThreadContextManager {
                     ", contextId: " + authContext.getContextIdentifier());
         }
         try {
-            // Set Carbon context for the current thread.
+            // Use startTenantFlow to push a clean CarbonContext frame.
+            // This ensures endTenantFlow in clear() restores the previous state,
+            // preventing tenant context leaks on pooled gRPC threads.
+            org.wso2.carbon.context.PrivilegedCarbonContext.startTenantFlow();
             org.wso2.carbon.context.PrivilegedCarbonContext carbonContext =
                     org.wso2.carbon.context.PrivilegedCarbonContext.getThreadLocalCarbonContext();
-            carbonContext.setTenantDomain(authContext.getTenantDomain());
-            carbonContext.setTenantId(
-                    org.wso2.carbon.identity.core.util.IdentityTenantUtil
-                            .getTenantId(authContext.getTenantDomain()));
+            carbonContext.setTenantDomain(authContext.getTenantDomain(), true);
 
             // Set username if available.
             if (authContext.getSubject() != null) {
@@ -181,6 +181,14 @@ class ThreadContextManager {
             log.debug("[RemoteJsEngine] Cleared JsGraalGraphBuilder ThreadLocals");
         } catch (Exception e) {
             log.debug("[RemoteJsEngine] Error clearing thread context: " + e.getMessage());
+        } finally {
+            // Pop the CarbonContext frame pushed by setup(), restoring the previous
+            // thread state. This prevents tenant context leaks on pooled gRPC threads.
+            try {
+                org.wso2.carbon.context.PrivilegedCarbonContext.endTenantFlow();
+            } catch (Exception e) {
+                log.debug("[RemoteJsEngine] Error ending tenant flow: " + e.getMessage());
+            }
         }
     }
 }

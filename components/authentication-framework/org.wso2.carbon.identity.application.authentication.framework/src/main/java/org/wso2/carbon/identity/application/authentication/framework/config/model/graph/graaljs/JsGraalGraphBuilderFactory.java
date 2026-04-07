@@ -54,11 +54,9 @@ import static org.wso2.carbon.identity.application.authentication.framework.util
 
 /**
  * Factory to create a Javascript based sequence builder.
- * This factory is there to reuse of GraalJS Polyglot Context and any related
- * expensive objects.
+ * This factory is there to reuse of GraalJS Polyglot Context and any related expensive objects.
  * <p>
- * Since Nashorn is deprecated in JDK 11 and onwards. We are introducing GraalJS
- * engine.
+ * Since Nashorn is deprecated in JDK 11 and onwards. We are introducing GraalJS engine.
  */
 public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<Context> {
 
@@ -115,13 +113,10 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
         engineBindings.getMemberKeys().forEach((key) -> {
             Value binding = engineBindings.getMember(key);
             /*
-             * Since, we don't have a difference between global and engine scopes, we need
-             * to identify what are the
-             * custom functions and the logger object we added bindings to, and not persist
-             * them since we will anyways
+             * Since, we don't have a difference between global and engine scopes, we need to identify what are the
+             * custom functions and the logger object we added bindings to, and not persist them since we will anyways
              * bind them again.
-             * The functions will be host objects and can be executed. The Logger object
-             * needs to be identified by name.
+             * The functions will be host objects and can be executed. The Logger object needs to be identified by name.
              */
             if (!((binding.isHostObject() && binding.canExecute()) || key.equals("Log"))) {
                 Object serialized = GraalSerializer.getInstance().toJsSerializable(binding);
@@ -162,10 +157,8 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
     public HostAccess getHostAccess() {
 
         /*
-         * We need to map the graaljs proxy objects be exposed as their abstract classes
-         * to be able to use the current
-         * functional interfaces we have for existing conditional authentication
-         * functions.
+         * We need to map the graaljs proxy objects be exposed as their abstract classes to be able to use the current
+         * functional interfaces we have for existing conditional authentication functions.
          */
         return HostAccess.newBuilder(HostAccess.EXPLICIT)
                 .allowListAccess(true)
@@ -202,23 +195,38 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
     public JsGraalGraphBuilder createBuilder(AuthenticationContext authenticationContext,
             Map<Integer, StepConfig> stepConfigMap) {
 
-        return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, createEngine(authenticationContext));
+        Context context = needsLocalContext(authenticationContext) ? createEngine(authenticationContext) : null;
+        return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, context);
     }
 
     public JsGraalGraphBuilder createBuilder(AuthenticationContext authenticationContext,
             Map<Integer, StepConfig> stepConfigMap, AuthGraphNode currentNode) {
 
-        return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, createEngine(authenticationContext),
-                currentNode);
+        Context context = needsLocalContext(authenticationContext) ? createEngine(authenticationContext) : null;
+        return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, context, currentNode);
+    }
+
+    /**
+     * Check whether a local GraalVM Polyglot Context is needed for this request.
+     * In REMOTE mode, scripts run on the sidecar so no local Context is needed.
+     * In LOCAL or HYBRID modes, a local Context is required.
+     *
+     * @param authenticationContext The authentication context.
+     * @return true if a local Polyglot Context should be created.
+     */
+    private boolean needsLocalContext(AuthenticationContext authenticationContext) {
+
+        if (jsEngineFactory == null) {
+            return true;
+        }
+        return jsEngineFactory.resolveMode(authenticationContext) != JsEngineFactory.ExecutionMode.REMOTE;
     }
 
     private void setJavascriptResourceLimit() {
 
         /*
-         * This sets the number of javascript statements that can be executed in a
-         * single execution.
-         * The default value is set to 0 which is equivalent to unlimited number of
-         * statement.
+         * This sets the number of javascript statements that can be executed in a single execution.
+         * The default value is set to 0 which is equivalent to unlimited number of statement.
          */
         String statementLimit = IdentityUtil.getProperty(GRAALJS_SCRIPT_STATEMENTS_LIMIT);
         if (statementLimit != null) {

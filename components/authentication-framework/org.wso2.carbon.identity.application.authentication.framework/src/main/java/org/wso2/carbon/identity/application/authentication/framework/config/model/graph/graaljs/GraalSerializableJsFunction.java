@@ -103,32 +103,10 @@ public class GraalSerializableJsFunction implements GenericSerializableJsFunctio
             }
             if (functionAsValue.canExecute()) {
                 if (functionAsValue.isHostObject()) {
-                    log.debug("[toSerializableForm] Skipping host object function");
                     return null;
                 }
-                log.debug("[toSerializableForm] Attempting to extract source from function");
-                try {
-                    String source = (String) functionAsValue.getSourceLocation().getCharacters();
-                    if (log.isDebugEnabled()) {
-                        log.debug("[toSerializableForm] Successfully extracted function source, length: " + source.length());
-                    }
-                    return serializePolyglot(source);
-                } catch (UnsupportedOperationException e) {
-                    log.error("[toSerializableForm] getSourceLocation() not supported for this function type", e);
-                    // Try toString() as fallback
-                    String functionString = functionAsValue.toString();
-                    if (functionString != null && functionString.startsWith("function")) {
-                        String truncatedFunction = functionString.substring(0, Math.min(50, functionString.length()));
-                        if (log.isDebugEnabled()) {
-                            log.debug("[toSerializableForm] Using toString() fallback: " + truncatedFunction);
-                        }
-                        return serializePolyglot(functionString);
-                    }
-                } catch (Exception e) {
-                    log.error("[toSerializableForm] Unexpected error extracting function source", e);
-                }
-            } else {
-                log.debug("[toSerializableForm] Value is not executable");
+                String source = (String) functionAsValue.getSourceLocation().getCharacters();
+                return serializePolyglot(source);
             }
         } catch (PolyglotException e) {
             log.error("Error when serializing JavaScript Function: ", e);

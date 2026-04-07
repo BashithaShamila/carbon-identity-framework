@@ -81,8 +81,7 @@ import static org.wso2.carbon.identity.application.authentication.framework.util
  * Translate the authentication graph config to runtime model.
  * This is not thread safe. Should be discarded after each build.
  * <p>
- * Since Nashorn is deprecated in JDK 11 and onwards. We are introducing GraalJS
- * engine.
+ * Since Nashorn is deprecated in JDK 11 and onwards. We are introducing GraalJS engine.
  */
 public class JsGraalGraphBuilder extends JsGraphBuilder {
 
@@ -167,14 +166,15 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         currentBuilder.remove();
     }
 
-    private static final String REMOVE_FUNCTIONS = "var quit=function(){Log.error('quit function is restricted.')};" +
-            "var exit=function(){Log.error('exit function is restricted.')};" +
-            "var print=function(){Log.error('print function is restricted.')};" +
-            "var echo=function(){Log.error('echo function is restricted.')};" +
-            "var readFully=function(){Log.error('readFully function is restricted.')};" +
-            "var readLine=function(){Log.error('readLine function is restricted.')};" +
-            "var load=function(){Log.error('load function is restricted.')};" +
-            "var loadWithNewGlobal=function(){Log.error('loadWithNewGlobal function is restricted.')};" +
+    private static final String REMOVE_FUNCTIONS = "var quit=function(){};" +
+            "var exit=function(){};" +
+            "var print=function(){};" +
+            "var echo=function(){};" +
+            "var readFully=function(){};" +
+            "var readLine=function(){};" +
+            "var load=function(){};" +
+            "var printErr=function(){};" +
+            "var loadWithNewGlobal=function(){};" +
             "var $ARG=null;var $ENV=null;var $EXEC=null;" +
             "var $OPTIONS=null;var $OUT=null;var $ERR=null;var $EXIT=null;" +
             "Object.defineProperty(this, 'engine', {});";
@@ -183,8 +183,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
      * Constructs the builder with the given authentication context.
      *
      * @param authenticationContext current authentication context.
-     * @param stepConfigMap         The Step map from the service provider
-     *                              configuration.
+     * @param stepConfigMap         The Step map from the service provider configuration.
      * @param context               Polyglot Context.
      */
     public JsGraalGraphBuilder(AuthenticationContext authenticationContext, Map<Integer, StepConfig> stepConfigMap,
@@ -201,13 +200,12 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
      * Constructs the builder with the given authentication context.
      *
      * @param authenticationContext current authentication context.
-     * @param stepConfigMap         The Step map from the service provider
-     *                              configuration.
+     * @param stepConfigMap         The Step map from the service provider configuration.
      * @param context               polyglot context.
      * @param currentNode           Current authentication graph node.
      */
     public JsGraalGraphBuilder(AuthenticationContext authenticationContext, Map<Integer, StepConfig> stepConfigMap,
-            Context context, AuthGraphNode currentNode) {
+                               Context context, AuthGraphNode currentNode) {
 
         this.authenticationContext = authenticationContext;
         this.context = context;
@@ -248,8 +246,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             bindings.putMember(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
             JsFunctionRegistry jsFunctionRegistrar = FrameworkServiceDataHolder.getInstance().getJsFunctionRegistry();
             if (jsFunctionRegistrar != null) {
-                Map<String, Object> functionMap = jsFunctionRegistrar
-                        .getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
+                Map<String, Object> functionMap =
+                        jsFunctionRegistrar.getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
                 functionMap.forEach(bindings::putMember);
             }
             currentBuilder.set(this);
@@ -284,8 +282,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
             }
             optionalScriptExecutionData.ifPresent(
-                    scriptExecutionData ->
-                            storeAuthScriptExecutionMonitorData(authenticationContext,
+                    scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
                             scriptExecutionData));
             if (log.isDebugEnabled()) {
                 log.debug("[createWith] About to persist context bindings for SP: " +
@@ -490,8 +487,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     /**
      * Adds all the event listeners to the decision node.
      *
-     * @param eventsMap Map of events and event handler functions, which is handled
-     *                  by this execution.
+     * @param eventsMap Map of events and event handler functions, which is handled by this execution.
      * @return created Dynamic Decision node.
      */
     private static void addEventListeners(DynamicDecisionNode decisionNode, Map<String, Object> eventsMap) {
@@ -836,8 +832,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         }
         currentNode = newNode;
         if (params.length > 0) {
-            // if there are any params provided, last one is assumed to be the event
-            // listeners
+            // if there are any params provided, last one is assumed to be the event listeners
             if (params[params.length - 1] instanceof Map) {
                 attachEventListeners((Map<String, Object>) params[params.length - 1]);
             } else {
@@ -866,8 +861,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     /**
-     * Handle options within executeStepInAsyncEvent function. This method will
-     * update step configs through context.
+     * Handle options within executeStepInAsyncEvent function. This method will update step configs through context.
      *
      * @param options       Map of authenticator options.
      * @param stepConfig    Current stepConfig.
@@ -876,7 +870,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     @Override
     @SuppressWarnings("unchecked")
     protected void handleOptionsAsyncEvent(Map<String, Object> options, StepConfig stepConfig,
-            Map<Integer, StepConfig> stepConfigMap) {
+                                           Map<Integer, StepConfig> stepConfigMap) {
 
         Object authenticationOptionsObj = options.get(AUTHENTICATION_OPTIONS);
         if (authenticationOptionsObj instanceof List) {
@@ -922,8 +916,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     /**
-     * Implementation of the SendErrorFunction interface as an adaptor for
-     * sendErrorAsync function.
+     * Implementation of the SendErrorFunction interface as an adaptor for sendErrorAsync function.
      */
     public static class SendErrorAsyncFunctionImpl implements SendErrorFunction {
 
@@ -934,8 +927,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     /**
-     * Implementation of the SendErrorFunction interface as an adaptor for sendError
-     * function.
+     * Implementation of the SendErrorFunction interface as an adaptor for sendError function.
      */
     public class SendErrorFunctionImpl implements SendErrorFunction {
 
@@ -951,8 +943,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         if (isShowErrorPage && StringUtils.isNotBlank(url)) {
             failNode.setErrorPageUri(url);
         }
-        // setShowErrorPage is set to true as sendError function redirects to a specific
-        // error page.
+        // setShowErrorPage is set to true as sendError function redirects to a specific error page.
         failNode.setShowErrorPage(isShowErrorPage);
 
         parameterMap.forEach((key, value) -> failNode.getFailureData().put(key, String.valueOf(value)));
@@ -961,8 +952,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
 
     /**
      * Javascript based Decision Evaluator implementation.
-     * This is used to create the Authentication Graph structure dynamically on the
-     * fly while the authentication flow
+     * This is used to create the Authentication Graph structure dynamically on the fly while the authentication flow
      * is happening.
      * The graph is re-organized based on last execution of the decision.
      */
@@ -1174,6 +1164,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             } finally {
                 contextForJs.remove();
                 dynamicallyBuiltBaseNode.remove();
+                clearCurrentBuilder();
             }
             return result;
         }
@@ -1203,9 +1194,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 bindings.putMember(JS_FUNC_LOAD_FUNC_LIB, new JsGraalLoadExecutorImpl());
                 bindings.putMember(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
                 /*
-                 * TODO: Need to improve the JsSerializable implementation to persist this
-                 * function in the context
-                 * without re-evaluating.
+                 TODO: Need to improve the JsSerializable implementation to persist this function in the context
+                  without re-evaluating.
                  */
                 context.eval(Source
                         .newBuilder(POLYGLOT_LANGUAGE,
@@ -1215,16 +1205,16 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 JsFunctionRegistry jsFunctionRegistrar = FrameworkServiceDataHolder.getInstance()
                         .getJsFunctionRegistry();
                 if (jsFunctionRegistrar != null) {
-                    Map<String, Object> functionMap = jsFunctionRegistrar
-                            .getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
+                    Map<String, Object> functionMap =
+                            jsFunctionRegistrar.getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
                     functionMap.forEach(bindings::putMember);
                 }
                 removeDefaultFunctions(context);
                 JsGraalGraphBuilder.contextForJs.set(authenticationContext);
 
                 String identifier = UUID.randomUUID().toString();
-                Optional<JSExecutionMonitorData> optionalScriptExecutionData = Optional
-                        .ofNullable(retrieveAuthScriptExecutionMonitorData(authenticationContext));
+                Optional<JSExecutionMonitorData> optionalScriptExecutionData =
+                        Optional.ofNullable(retrieveAuthScriptExecutionMonitorData(authenticationContext));
                 try {
                     startScriptExecutionMonitor(identifier, authenticationContext,
                             optionalScriptExecutionData.orElse(null));
@@ -1245,7 +1235,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 }
 
             } catch (Throwable e) {
-                // We need to catch all the javascript errors here, then log and handle.
+                //We need to catch all the javascript errors here, then log and handle.
                 log.error("Error in executing the javascript for service provider : " +
                         authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
                         jsFunction.getSource(), e);
@@ -1384,7 +1374,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     private void startScriptExecutionMonitor(String identifier, AuthenticationContext context,
-            JSExecutionMonitorData previousExecutionResult) {
+                                             JSExecutionMonitorData previousExecutionResult) {
 
         JSExecutionSupervisor jsExecutionSupervisor = getJSExecutionSupervisor();
         if (jsExecutionSupervisor == null) {

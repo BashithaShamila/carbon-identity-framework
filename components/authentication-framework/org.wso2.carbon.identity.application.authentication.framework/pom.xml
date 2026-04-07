@@ -297,7 +297,7 @@
             </extension>
         </extensions>
         <plugins>
-            <!-- Protobuf code generation with gRPC support (run manually: mvn protobuf:compile protobuf:compile-custom) -->
+            <!-- Protobuf code generation with gRPC support, bound to generate-sources phase. -->
             <plugin>
                 <groupId>org.xolstice.maven.plugins</groupId>
                 <artifactId>protobuf-maven-plugin</artifactId>
@@ -308,6 +308,10 @@
                     <pluginId>grpc-java</pluginId>
                     <pluginArtifact>io.grpc:protoc-gen-grpc-java:1.51.1:exe:${os.detected.classifier}</pluginArtifact>
                 </configuration>
+                <!-- No lifecycle-bound executions: protobuf-maven-plugin v0.6.1 generates
+                     empty/corrupt output in lifecycle mode. Use standalone goals instead:
+                     mvn protobuf:compile protobuf:compile-custom (phase 1 of the build) -->
+                <executions/>
             </plugin>
             <!-- Register protobuf generated sources for compilation -->
             <plugin>
