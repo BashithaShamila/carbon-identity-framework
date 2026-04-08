@@ -41,7 +41,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Handles sidecar callbacks received on the bidirectional gRPC stream:
+ * Handles External callbacks received on the bidirectional gRPC stream:
  * host function invocations, context property reads, and context property writes.
  * <p>
  * Thread model: Methods are invoked on the callback executor thread (not the gRPC event thread).
@@ -49,12 +49,12 @@ import java.util.Map;
  * <p>
  * This class is stateless — all session context (handler, stream, lock) is passed per-call.
  */
-class SidecarCallbackHandler {
+class ExternalCallbackHandler {
 
-    private static final Log log = LogFactory.getLog(SidecarCallbackHandler.class);
+    private static final Log log = LogFactory.getLog(ExternalCallbackHandler.class);
 
     /**
-     * Handle a host function request from the sidecar.
+     * Handle a host function request from the External.
      * Deserializes arguments, invokes the host function via the handler,
      * serializes the result, and sends the response back on the stream.
      * <p>
@@ -62,7 +62,7 @@ class SidecarCallbackHandler {
      * for lazy-loading complex objects (e.g., User arrays).
      *
      * @param sessionId  The session identifier.
-     * @param request    The host function request from the sidecar.
+     * @param request    The host function request from the External.
      * @param handler    The host function handler for this session.
      * @param outbound   The outbound stream observer for sending responses.
      * @param streamLock The lock object for synchronized stream writes.
@@ -168,14 +168,14 @@ class SidecarCallbackHandler {
     }
 
     /**
-     * Handle a context property read request from the sidecar.
+     * Handle a context property read request from the External.
      * Resolves the property path via the handler, determines if the value is a proxy type,
      * and sends the appropriate response (proxy metadata with member keys, or serialized value).
      * <p>
      * Handles the special {@code __keys__} path for member key enumeration.
      *
      * @param sessionId  The session identifier.
-     * @param request    The context property request from the sidecar.
+     * @param request    The context property request from the External.
      * @param handler    The host function handler for this session.
      * @param outbound   The outbound stream observer for sending responses.
      * @param streamLock The lock object for synchronized stream writes.
@@ -255,11 +255,11 @@ class SidecarCallbackHandler {
     }
 
     /**
-     * Handle a context property write request from the sidecar.
+     * Handle a context property write request from the External.
      * Deserializes the value from protobuf and delegates to the handler for property setting.
      *
      * @param sessionId  The session identifier.
-     * @param request    The context property set request from the sidecar.
+     * @param request    The context property set request from the External.
      * @param handler    The host function handler for this session.
      * @param outbound   The outbound stream observer for sending responses.
      * @param streamLock The lock object for synchronized stream writes.

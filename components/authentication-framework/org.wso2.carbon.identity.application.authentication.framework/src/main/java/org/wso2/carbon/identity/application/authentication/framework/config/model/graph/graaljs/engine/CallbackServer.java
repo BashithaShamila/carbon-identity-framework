@@ -87,7 +87,7 @@ public interface CallbackServer extends Closeable {
         /**
          * Store a complex object reference for later property access via the context proxy path.
          * Used when host functions return complex objects (e.g., JsGraalAuthenticatedUser) that
-         * cannot be serialized as primitives and need to be accessed via dynamic proxy on the sidecar.
+         * cannot be serialized as primitives and need to be accessed via dynamic proxy on the External.
          *
          * @param obj The complex object to store.
          * @return A unique reference ID for the stored object, or null if not supported.

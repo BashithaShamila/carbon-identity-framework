@@ -307,7 +307,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     // ============ Private Helpers ============
 
     /**
-     * Creates a StreamObserver that handles incoming messages from the sidecar.
+     * Creates a StreamObserver that handles incoming messages from the External.
      * Routes to the appropriate handler based on message type.
      * <p>
      * The handler and outbound stream reference are captured in the closure, eliminating the need
@@ -433,7 +433,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     }
 
     /**
-     * Handle a host function request from the sidecar.
+     * Handle a host function request from the External.
      * Invokes the handler and sends the response back on the stream.
      * Handler and outbound stream are passed directly from the stream closure (no map lookups).
      */
@@ -537,7 +537,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     }
 
     /**
-     * Handle a context property request from the sidecar.
+     * Handle a context property request from the External.
      * Handler and outbound stream are passed directly from the stream closure (no map lookups).
      */
     private void handleContextPropertyRequest(String sessionId, ContextPropertyRequest request,
@@ -612,7 +612,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     }
 
     /**
-     * Handle a context property set request from the sidecar.
+     * Handle a context property set request from the External.
      * Handler and outbound stream are passed directly from the stream closure (no map lookups).
      */
     private void handleContextPropertySetRequest(String sessionId, ContextPropertySetRequest request,

@@ -244,7 +244,7 @@
             <artifactId>org.wso2.carbon.identity.graaljs.deps.wrapper</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- junixsocket for UDS communication with GraalJS sidecar (compile only, exported by wrapper) -->
+        <!-- junixsocket for UDS communication with GraalJS External (compile only, exported by wrapper) -->
         <dependency>
             <groupId>com.kohlschutter.junixsocket</groupId>
             <artifactId>junixsocket-core</artifactId>
@@ -258,7 +258,7 @@
             <version>2.9.1</version>
             <scope>provided</scope>
         </dependency>
-        <!-- Protocol Buffers for sidecar communication (compile only, exported by wrapper) -->
+        <!-- Protocol Buffers for External communication (compile only, exported by wrapper) -->
         <dependency>
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java</artifactId>

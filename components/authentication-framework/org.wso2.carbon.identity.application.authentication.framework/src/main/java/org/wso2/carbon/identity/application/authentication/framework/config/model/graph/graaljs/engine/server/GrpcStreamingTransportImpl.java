@@ -50,14 +50,14 @@ import java.util.concurrent.atomic.AtomicReference;
  * HTTP/2 stream. This gives each session its own lock, its own stream lifecycle, and avoids
  * contention between concurrent sessions. The stream closes after the response is received.
  * <p>
- * Sidecar callback handling (host functions, context property get/set) is delegated to
- * {@link SidecarCallbackHandler}, keeping this class focused on stream mechanics.
+ * External callback handling (host functions, context property get/set) is delegated to
+ * {@link ExternalCallbackHandler}, keeping this class focused on stream mechanics.
  * <p>
  * Thread model:
  * <ul>
  *   <li>IS HTTP thread calls sendEvaluate()/sendExecuteCallback() and blocks on CompletableFuture</li>
  *   <li>gRPC event thread receives StreamMessage via onNext() and dispatches to callback executor</li>
- *   <li>Callback executor invokes {@link SidecarCallbackHandler} methods</li>
+ *   <li>Callback executor invokes {@link ExternalCallbackHandler} methods</li>
  *   <li>All sends to a session's stream are synchronized via that session's lock</li>
  * </ul>
  */
@@ -70,7 +70,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     private final GrpcConnectionManager connectionManager;
     private final String correlationId;
     private final ExecutorService callbackExecutor = Executors.newCachedThreadPool();
-    private final SidecarCallbackHandler callbackHandler = new SidecarCallbackHandler();
+    private final ExternalCallbackHandler callbackHandler = new ExternalCallbackHandler();
 
     public GrpcStreamingTransportImpl(String grpcTarget) {
         this(grpcTarget, 5);
@@ -299,9 +299,9 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     // ============ Stream Observer Factory ============
 
     /**
-     * Creates a StreamObserver that handles incoming messages from the sidecar.
+     * Creates a StreamObserver that handles incoming messages from the External.
      * Routes terminal responses (evaluate/callback) to their CompletableFuture.
-     * Routes sidecar callbacks (host function, context property) to {@link SidecarCallbackHandler}
+     * Routes External callbacks (host function, context property) to {@link ExternalCallbackHandler}
      * via the callback executor.
      * <p>
      * The handler and outbound stream reference are captured in the closure, eliminating the need

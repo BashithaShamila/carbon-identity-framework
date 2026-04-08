@@ -40,11 +40,11 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Remote JavaScript engine that communicates with a GraalJS sidecar via
+ * Remote JavaScript engine that communicates with a GraalJS External via
  * pluggable transport.
- * Each instance represents a session with the sidecar.
+ * Each instance represents a session with the External.
  * <p>
- * Host function calls from the sidecar are routed back to IS via the callback
+ * Host function calls from the External are routed back to IS via the callback
  * server.
  * <p>
  * This implementation is decoupled from specific transport mechanisms
@@ -53,7 +53,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Responsibilities are delegated to focused collaborators:
  * <ul>
  *   <li>{@link ThreadContextManager} — thread-local context setup/cleanup for gRPC callbacks</li>
- *   <li>{@link ArgumentAdapter} — sidecar argument adaptation and type conversion</li>
+ *   <li>{@link ArgumentAdapter} — External argument adaptation and type conversion</li>
  *   <li>{@link ProxyReferenceCache} — proxy object and host function return reference caching</li>
  * </ul>
  */
@@ -168,7 +168,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             }
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
                 // Skip "context" -- JsGraalAuthenticationContext is not ProtobufSerializer-compatible.
-                // Context state is sent as structured ContextData and the sidecar accesses it
+                // Context state is sent as structured ContextData and the External accesses it
                 // via DynamicContextProxy callbacks. Serializing it here causes a toString()
                 // fallback with WARN log. If this binding is ever needed, implement a proper
                 // toProto() conversion for JsGraalAuthenticationContext first.
@@ -177,7 +177,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 }
             }
 
-            // Add host function definitions so sidecar knows to call back
+            // Add host function definitions so External knows to call back
             for (String funcName : hostFunctions.keySet()) {
                 if (log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Registering host function: " + funcName);
@@ -188,7 +188,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                                 .build());
             }
 
-            // Add context data for context proxy reconstruction in sidecar
+            // Add context data for context proxy reconstruction in External
             if (authContext != null) {
                 if (log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Adding context data, step: " + authContext.getCurrentStep() +
@@ -245,7 +245,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
                             "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
                             "ms, total=" + isElapsed + "ms" +
-                            ", sidecarReported=" + response.getElapsedMs() + "ms");
+                            ", ExternalReported=" + response.getElapsedMs() + "ms");
                 }
 
                 evalResult = EvaluationResult.builder()
@@ -361,7 +361,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     }
                     // Replace JsGraalAuthenticationContext with a marker string instead of
                     // serializing the full object (which is not ProtobufSerializer-compatible
-                    // and causes a toString() fallback with WARN log). The sidecar detects
+                    // and causes a toString() fallback with WARN log). The External detects
                     // this marker via sv.getStringValue().contains("JsGraalAuthenticationContext")
                     // and substitutes its local DynamicContextProxy. We must preserve the
                     // argument position — skipping it would shift subsequent args (e.g.,
@@ -386,7 +386,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             int bindingsAdded = 0;
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
                 // Skip "context" -- JsGraalAuthenticationContext is not ProtobufSerializer-compatible.
-                // Context state is sent as structured ContextData and the sidecar accesses it
+                // Context state is sent as structured ContextData and the External accesses it
                 // via DynamicContextProxy callbacks. Serializing it here causes a toString()
                 // fallback with WARN log. If this binding is ever needed, implement a proper
                 // toProto() conversion for JsGraalAuthenticationContext first.
@@ -404,7 +404,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 log.debug("[RemoteJsEngine] Bindings serialized: " + bindingsAdded);
             }
 
-            // Add host function definitions so sidecar knows to create stubs for callbacks
+            // Add host function definitions so External knows to create stubs for callbacks
             if (log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Adding " + hostFunctions.size() + " host function definitions");
             }
@@ -447,7 +447,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
                             "ms, responseProcess=" + (tResponseProcessed - tResponseReceived) +
                             "ms, total=" + isElapsed + "ms" +
-                            ", sidecarReported=" + response.getElapsedMs() + "ms");
+                            ", ExternalReported=" + response.getElapsedMs() + "ms");
                 }
 
                 evalResult = EvaluationResult.builder()
@@ -520,8 +520,8 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     // ======================== HostFunctionHandler Implementation ========================
 
     /**
-     * Handle host function callback from sidecar.
-     * This is called when the sidecar JavaScript invokes a host function.
+     * Handle host function callback from External.
+     * This is called when the External JavaScript invokes a host function.
      */
     @Override
     public Object invokeHostFunction(String functionName, Object... args) throws Exception {
@@ -672,7 +672,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     }
 
     /**
-     * Set a context property value (write-back from sidecar).
+     * Set a context property value (write-back from External).
      * This navigates the property path and sets the value on the target object.
      * Supports paths like:
      * "steps::1::subject::claims::http://wso2.org/claims/email"

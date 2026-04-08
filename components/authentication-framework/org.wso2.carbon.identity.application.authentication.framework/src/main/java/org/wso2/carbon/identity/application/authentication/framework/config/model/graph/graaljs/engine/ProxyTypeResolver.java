@@ -31,7 +31,7 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
  *    - Criteria: class name heuristics (.User, .model., .domain.) OR getter count > 3.
  *
  * 2. "Is this a JS wrapper proxy type?" (isJsWrapperProxy / getJsWrapperProxyType)
- *    - Used when returning host function results to the sidecar.
+ *    - Used when returning host function results to the External.
  *    - Criteria: class name contains JsGraal, JsServlet, JsStep, JsAuthenticated, JsWritable,
  *      or object implements ProxyObject.
  */

@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li><b>Proxy objects</b>: Complex objects cached for lazy property loading
  *       (e.g., User arrays from getUsersWithClaimValues). Accessed via "__proxyref__" prefix.</li>
  *   <li><b>Host function return refs</b>: Objects returned by host functions that need
- *       property access from the sidecar. Accessed via "__hostref__" prefix.</li>
+ *       property access from the External. Accessed via "__hostref__" prefix.</li>
  * </ul>
  */
 class ProxyReferenceCache {
@@ -51,7 +51,7 @@ class ProxyReferenceCache {
     /**
      * Store a complex object reference for later property access.
      * Used when host functions return complex objects that need to be accessed
-     * via dynamic proxy on the sidecar.
+     * via dynamic proxy on the External.
      *
      * @param obj The object to store.
      * @return A unique reference ID.

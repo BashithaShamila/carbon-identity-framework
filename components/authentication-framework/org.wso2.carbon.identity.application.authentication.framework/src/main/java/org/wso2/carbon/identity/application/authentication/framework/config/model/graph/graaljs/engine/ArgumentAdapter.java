@@ -35,12 +35,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Adapts arguments from sidecar (protobuf-deserialized) format to Java types
+ * Adapts arguments from External (protobuf-deserialized) format to Java types
  * expected by host function method signatures.
  * <p>
  * Handles:
  * <ul>
- *   <li>Context proxy marker reconstruction (sidecar sends Map with __isContextProxy__ flag)</li>
+ *   <li>Context proxy marker reconstruction (External sends Map with __isContextProxy__ flag)</li>
  *   <li>Authenticated user direct reconstruction (bypasses proxy navigation for steps::N::subject)</li>
  *   <li>Primitive type coercion (protobuf Double to Integer/Long/Boolean/String)</li>
  *   <li>VarArgs method adaptation with null filtering</li>
@@ -62,7 +62,7 @@ class ArgumentAdapter {
      * This handles reconstruction of JsAuthenticationContext and type conversions.
      *
      * @param method The method to adapt arguments for.
-     * @param args   The raw arguments from the sidecar.
+     * @param args   The raw arguments from the External.
      * @return Adapted arguments matching the method's parameter types.
      */
     Object[] adaptArgumentsForMethod(Method method, Object[] args) {
@@ -185,8 +185,8 @@ class ArgumentAdapter {
             return null;
         }
 
-        // IMPORTANT: Check for context proxy marker from sidecar.
-        // When the sidecar sends a DynamicContextProxy as an argument, it serializes it
+        // IMPORTANT: Check for context proxy marker from External.
+        // When the External sends a DynamicContextProxy as an argument, it serializes it
         // as a Map
         // with special marker fields. We need to reconstruct the actual object from
         // stored authContext.
@@ -338,7 +338,7 @@ class ArgumentAdapter {
     }
 
     /**
-     * Reconstruct a context object from a proxy marker sent by the sidecar.
+     * Reconstruct a context object from a proxy marker sent by the External.
      * This handles nested properties like context.currentKnownSubject,
      * context.steps[1], etc.
      *

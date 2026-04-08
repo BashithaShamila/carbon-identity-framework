@@ -25,7 +25,7 @@ import org.wso2.carbon.identity.application.authentication.framework.context.Aut
  * <p>
  * When the engine mode is set to HYBRID, the {@link JsEngineFactory} delegates to an
  * implementation of this interface to determine whether a given authentication request
- * should use the LOCAL (in-JVM GraalJS) or REMOTE (sidecar via gRPC) engine.
+ * should use the LOCAL (in-JVM GraalJS) or REMOTE (External via gRPC) engine.
  * <p>
  * Implementations can be dropped into the server's dropins folder as OSGi bundles,
  * allowing custom routing logic without modifying the core framework.

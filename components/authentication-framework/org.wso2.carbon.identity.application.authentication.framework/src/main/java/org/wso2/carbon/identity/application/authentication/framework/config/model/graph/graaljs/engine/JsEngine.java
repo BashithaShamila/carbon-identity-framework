@@ -25,7 +25,7 @@ import java.util.Map;
 /**
  * Interface for JavaScript execution engines.
  * Abstracts the execution layer to support both in-JVM (local) and remote
- * sidecar execution modes.
+ * External execution modes.
  * <p>
  * Implementations must be thread-safe as multiple authentication flows may use
  * the same engine

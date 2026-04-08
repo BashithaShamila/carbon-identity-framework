@@ -227,7 +227,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         JsEngineFactory jsEngineFactory = JsEngineFactory.getInstance();
         if (jsEngineFactory.resolveMode(authenticationContext) == JsEngineFactory.ExecutionMode.REMOTE) {
             if (log.isDebugEnabled()) {
-                log.debug("[createWith] Using REMOTE execution mode via sidecar");
+                log.debug("[createWith] Using REMOTE execution mode via External");
             }
             return createWithRemote(script);
         }
@@ -314,8 +314,8 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     }
 
     /**
-     * Creates the graph with the given Script using remote sidecar execution.
-     * This method sends the script to the sidecar for evaluation and processes
+     * Creates the graph with the given Script using remote External execution.
+     * This method sends the script to the External for evaluation and processes
      * callback results.
      *
      * @param script the Dynamic authentication script.
@@ -338,7 +338,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                         ", contextId: " + authenticationContext.getContextIdentifier());
             }
 
-            // Register host functions that the sidecar can call back.
+            // Register host functions that the External can call back.
             Map<String, Object> hostFunctions = new HashMap<>();
             hostFunctions.put(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuter());
             hostFunctions.put(JS_FUNC_SEND_ERROR, new SendErrorFunctionImpl());
@@ -365,16 +365,16 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     "\n" +
                     script +
                     "\n" +
-                    // Call onLoginRequest with context placeholder - sidecar will inject actual
+                    // Call onLoginRequest with context placeholder - External will inject actual
                     // context.
                     JS_FUNC_ON_LOGIN_REQUEST + "(context);";
 
             if (log.isDebugEnabled()) {
                 log.debug("[createWithRemote] Sending script (length: " + completeScript.length() +
-                        ") to sidecar for evaluation");
+                        ") to External for evaluation");
             }
 
-            // Build initial bindings (context will be created by sidecar from ContextData).
+            // Build initial bindings (context will be created by External from ContextData).
             Map<String, Object> initialBindings = new HashMap<>();
 
             String identifier = UUID.randomUUID().toString();
@@ -399,10 +399,10 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                             evalResult.getElapsedMs() + "ms");
                 }
 
-                // Update bindings from sidecar response.
+                // Update bindings from External response.
                 if (evalResult.getUpdatedBindings() != null) {
                     if (log.isDebugEnabled()) {
-                        log.debug("[createWithRemote] Updating bindings from sidecar: " +
+                        log.debug("[createWithRemote] Updating bindings from External: " +
                                 evalResult.getUpdatedBindings().keySet());
                     }
                     for (Map.Entry<String, Object> entry : evalResult.getUpdatedBindings().entrySet()) {
@@ -434,7 +434,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             }
 
             // Persist bindings for later callback execution.
-            // Note: With remote execution, we persist the updated bindings from sidecar.
+            // Note: With remote execution, we persist the updated bindings from External.
             Map<String, Object> persistableBindings = jsEngine.getBindings();
             authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", persistableBindings);
             if (log.isDebugEnabled()) {
@@ -498,7 +498,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         eventsMap.forEach((key, value) -> {
             if ((!(value instanceof GraalSerializableJsFunction))) {
                 if (value instanceof String) {
-                    // Remote mode: sidecar serializes JS functions as source code strings.
+                    // Remote mode: External serializes JS functions as source code strings.
                     String source = (String) value;
                     if (source.trim().startsWith("function") || source.contains("=>")) {
                         GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
@@ -530,7 +530,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         handlersMap.forEach((key, value) -> {
             if (!(value instanceof GraalSerializableJsFunction)) {
                 if (value instanceof String) {
-                    // Remote mode: sidecar serializes JS functions as source code strings.
+                    // Remote mode: External serializes JS functions as source code strings.
                     String source = (String) value;
                     if (source.trim().startsWith("function") || source.contains("=>")) {
                         GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
@@ -863,7 +863,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 return jsFunction.getSource();
             }
 
-            // Route to remote sidecar if configured.
+            // Route to remote External if configured.
             JsEngineFactory jsEngineFactory = JsEngineFactory.getInstance();
             if (jsEngineFactory.resolveMode(authenticationContext) == JsEngineFactory.ExecutionMode.REMOTE) {
                 return evaluateRemote(authenticationContext, params);
@@ -938,7 +938,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         }
 
         /**
-         * Execute JavaScript in a remote sidecar process.
+         * Execute JavaScript in a remote External process.
          * This provides isolation from the main JVM.
          *
          * @param authenticationContext The authentication context.
@@ -994,7 +994,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                     persistedBindings = new HashMap<>();
                 }
 
-                // Register host functions that the sidecar can call back.
+                // Register host functions that the External can call back.
                 Map<String, Object> hostFunctions = new HashMap<>();
                 hostFunctions.put(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuterInAsyncEvent());
                 hostFunctions.put(JS_FUNC_SEND_ERROR, new SendErrorAsyncFunctionImpl());
@@ -1026,7 +1026,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                         ((RemoteJsEngine) jsEngine).resetAccumulatedDynamicBaseNode();
                     }
 
-                    // Execute the callback function in the sidecar with persisted bindings
+                    // Execute the callback function in the External with persisted bindings
                     EvaluationResult evalResult = jsEngine.executeCallback(
                             jsFunction.getSource(),
                             params,

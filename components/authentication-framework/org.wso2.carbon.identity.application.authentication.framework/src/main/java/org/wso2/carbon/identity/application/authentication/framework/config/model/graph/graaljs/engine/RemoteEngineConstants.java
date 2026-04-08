@@ -20,8 +20,8 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 /**
  * Centralized constants for the remote JS engine protocol.
- * These string values form the wire protocol between IS and the GraalJS sidecar.
- * Any change here MUST be mirrored in the sidecar's SidecarConstants.java.
+ * These string values form the wire protocol between IS and the GraalJS External.
+ * Any change here MUST be mirrored in the External's ExternalConstants.java.
  *
  * Categories:
  * 1. Type markers   - Non-serializable object placeholders
@@ -78,7 +78,7 @@ public final class RemoteEngineConstants {
     /** The binding key for the authentication context object. */
     public static final String CONTEXT_BINDING_KEY = "context";
 
-    /** The binding key for the callback context in sidecar. */
+    /** The binding key for the callback context in External. */
     public static final String CALLBACK_CONTEXT_KEY = "__callbackContext";
 
     // ============ Path ============
@@ -92,12 +92,12 @@ public final class RemoteEngineConstants {
     public static final String PROXY_TYPE_POJO = "pojo";
 
     // ============ mTLS Configuration ============
-    // Toggle mTLS for gRPC communication with the sidecar.
+    // Toggle mTLS for gRPC communication with the External.
     // When true, certs are loaded from ${carbon.home}/MTLS_CERT_DIR.
     // When false, plaintext gRPC is used (current dev behavior).
-    // Any change here MUST be mirrored in the sidecar's SidecarConstants.java.
+    // Any change here MUST be mirrored in the External's ExternalConstants.java.
 
-    /** Master toggle for mTLS on the IS→sidecar gRPC channel. */
+    /** Master toggle for mTLS on the IS→External gRPC channel. */
     public static final boolean MTLS_ENABLED = true;
 
     /** Cert directory relative to carbon.home. */
@@ -109,6 +109,6 @@ public final class RemoteEngineConstants {
     /** Client private key filename (PKCS#8 PEM). */
     public static final String MTLS_CLIENT_KEY = "client-key.pem";
 
-    /** CA certificate filename (PEM) — used to verify sidecar server cert. */
+    /** CA certificate filename (PEM) — used to verify External server cert. */
     public static final String MTLS_CA_CERT = "ca.pem";
 }

@@ -256,7 +256,7 @@ public class ProtobufSerializer {
         // returning 100 User objects). Eagerly introspecting all getters triggers
         // expensive operations (database calls) and causes timeouts.
         //
-        // Instead, we create a proxy marker and cache the object. When the sidecar
+        // Instead, we create a proxy marker and cache the object. When the External
         // accesses a property (e.g., users[i].username), it sends a callback to fetch
         // only that property on-demand.
         Map<String, Object> cache = getSessionProxyCache();

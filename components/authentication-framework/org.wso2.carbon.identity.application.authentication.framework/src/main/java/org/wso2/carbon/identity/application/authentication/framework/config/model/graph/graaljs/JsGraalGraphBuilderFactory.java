@@ -208,7 +208,7 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
 
     /**
      * Check whether a local GraalVM Polyglot Context is needed for this request.
-     * In REMOTE mode, scripts run on the sidecar so no local Context is needed.
+     * In REMOTE mode, scripts run on the External so no local Context is needed.
      * In LOCAL or HYBRID modes, a local Context is required.
      *
      * @param authenticationContext The authentication context.

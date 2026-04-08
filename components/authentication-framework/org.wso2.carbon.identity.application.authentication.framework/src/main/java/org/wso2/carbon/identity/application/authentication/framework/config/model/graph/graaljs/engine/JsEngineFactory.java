@@ -42,7 +42,7 @@ import static org.wso2.carbon.identity.application.authentication.framework.util
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_SCRIPT_STATEMENTS_LIMIT;
 /**
  * Factory for creating JavaScript engines.
- * Supports LOCAL (in-JVM), REMOTE (sidecar via gRPC), and HYBRID (per-request routing) modes.
+ * Supports LOCAL (in-JVM), REMOTE (External via gRPC), and HYBRID (per-request routing) modes.
  * <p>
  * Engine mode can be configured in deployment.toml:
  * <pre>
@@ -67,7 +67,7 @@ public class JsEngineFactory {
          */
         LOCAL,
         /**
-         * Execute JavaScript in a remote sidecar process via gRPC.
+         * Execute JavaScript in a remote External process via gRPC.
          */
         REMOTE
     }
@@ -81,7 +81,7 @@ public class JsEngineFactory {
          */
         LOCAL,
         /**
-         * All requests use the remote sidecar engine via gRPC.
+         * All requests use the remote External engine via gRPC.
          */
         REMOTE,
         /**
@@ -138,7 +138,7 @@ public class JsEngineFactory {
     }
 
     /**
-     * Create a remote (sidecar) JavaScript engine.
+     * Create a remote (External) JavaScript engine.
      * Uses the embedded gRPC transport provider directly within the same bundle.
      *
      * @param authenticationContext The authentication context.

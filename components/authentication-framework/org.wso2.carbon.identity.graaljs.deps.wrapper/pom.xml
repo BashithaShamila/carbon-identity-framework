@@ -31,10 +31,10 @@
     <artifactId>org.wso2.carbon.identity.graaljs.deps.wrapper</artifactId>
     <packaging>jar</packaging>
     <name>WSO2 Carbon - GraalJS Dependencies Wrapper Bundle</name>
-    <description>OSGi bundle wrapper for GraalJS sidecar dependencies (junixsocket, protobuf)</description>
+    <description>OSGi bundle wrapper for GraalJS External dependencies (junixsocket, protobuf)</description>
 
     <dependencies>
-        <!-- junixsocket for UDS communication with GraalJS sidecar -->
+        <!-- junixsocket for UDS communication with GraalJS External -->
         <dependency>
             <groupId>com.kohlschutter.junixsocket</groupId>
             <artifactId>junixsocket-common</artifactId>
@@ -47,7 +47,7 @@
             <version>2.9.1</version>
         </dependency>
         
-        <!-- Protocol Buffers for sidecar communication -->
+        <!-- Protocol Buffers for External communication -->
         <dependency>
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java</artifactId>
