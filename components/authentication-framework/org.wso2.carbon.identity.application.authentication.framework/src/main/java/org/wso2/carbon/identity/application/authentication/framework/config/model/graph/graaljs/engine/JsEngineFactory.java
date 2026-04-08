@@ -20,19 +20,16 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.HostAccess;
 import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.Value;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticatedUser;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticationContext;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsLogger;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsParameters;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsServletRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsServletResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticatedUser;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
-import org.wso2.carbon.identity.application.authentication.framework.handler.sequence.impl.GraalSelectAcrFromFunction;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server.GrpcTransportProvider;
 import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
@@ -43,10 +40,6 @@ import static org.wso2.carbon.identity.application.authentication.framework.util
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_ENGINE_MODE;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_GRPC_TARGET;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_SCRIPT_STATEMENTS_LIMIT;
-import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.JSAttributes.JS_FUNC_SELECT_ACR_FROM;
-import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.JSAttributes.JS_LOG;
-import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.JSAttributes.POLYGLOT_LANGUAGE;
-
 /**
  * Factory for creating JavaScript engines.
  * Supports LOCAL (in-JVM), REMOTE (sidecar via gRPC), and HYBRID (per-request routing) modes.
@@ -134,41 +127,14 @@ public class JsEngineFactory {
 
     /**
      * Create a JavaScript engine for the given authentication context.
+     * This is only called from remote execution code paths.
      *
      * @param authenticationContext The authentication context.
-     * @return A JsEngine instance configured for the resolved execution mode.
+     * @return A JsEngine instance configured for remote execution.
      */
     public JsEngine createEngine(AuthenticationContext authenticationContext) {
 
-        ExecutionMode resolvedMode = resolveExecutionMode(authenticationContext);
-
-        if (resolvedMode == ExecutionMode.LOCAL) {
-            return createLocalEngine(authenticationContext);
-        } else {
-            return createRemoteEngine(authenticationContext);
-        }
-    }
-
-    /**
-     * Create a local (in-JVM) JavaScript engine.
-     *
-     * @param authenticationContext The authentication context.
-     * @return LocalJsEngine instance.
-     */
-    public LocalJsEngine createLocalEngine(AuthenticationContext authenticationContext) {
-
-        Context context = Context.newBuilder(POLYGLOT_LANGUAGE)
-                .allowHostAccess(getHostAccess())
-                .resourceLimits(getResourceLimits())
-                .option("engine.WarnInterpreterOnly", "false")
-                .build();
-
-        // Set up default bindings
-        Value bindings = context.getBindings(POLYGLOT_LANGUAGE);
-        bindings.putMember(JS_FUNC_SELECT_ACR_FROM, new GraalSelectAcrFromFunction());
-        bindings.putMember(JS_LOG, new JsLogger());
-
-        return new LocalJsEngine(context);
+        return createRemoteEngine(authenticationContext);
     }
 
     /**
