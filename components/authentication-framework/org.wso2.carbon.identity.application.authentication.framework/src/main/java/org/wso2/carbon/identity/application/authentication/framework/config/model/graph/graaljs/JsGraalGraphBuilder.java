@@ -863,12 +863,76 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 return jsFunction.getSource();
             }
 
-            // Resolve execution mode for this specific authentication context.
+            // Route to remote sidecar if configured.
             JsEngineFactory jsEngineFactory = JsEngineFactory.getInstance();
             if (jsEngineFactory.resolveMode(authenticationContext) == JsEngineFactory.ExecutionMode.REMOTE) {
-                result = evaluateRemote(authenticationContext, params);
-            } else {
-                result = evaluateLocal(authenticationContext, params);
+                return evaluateRemote(authenticationContext, params);
+            }
+
+            try {
+                currentBuilder.set(graphBuilder);
+                JsGraalGraphBuilderFactory.restoreCurrentContext(authenticationContext, context);
+                Context context = getContext();
+                Value bindings = context.getBindings(POLYGLOT_LANGUAGE);
+
+                bindings.putMember(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuterInAsyncEvent());
+                bindings.putMember(JS_FUNC_SEND_ERROR, new SendErrorAsyncFunctionImpl());
+                bindings.putMember(JS_AUTH_FAILURE, new FailAuthenticationFunctionImpl());
+                bindings.putMember(JS_FUNC_SHOW_PROMPT, new JsGraalPromptExecutorImpl());
+                bindings.putMember(JS_FUNC_LOAD_FUNC_LIB, new JsGraalLoadExecutorImpl());
+                bindings.putMember(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
+                /*
+                TODO: Need to improve the JsSerializable implementation to persist this function in the context
+                 without re-evaluating.
+                 */
+                context.eval(Source
+                        .newBuilder(POLYGLOT_LANGUAGE,
+                                FrameworkServiceDataHolder.getInstance().getCodeForSecretsFunction(),
+                                POLYGLOT_SOURCE)
+                        .build());
+                JsFunctionRegistry jsFunctionRegistrar =
+                        FrameworkServiceDataHolder.getInstance().getJsFunctionRegistry();
+                if (jsFunctionRegistrar != null) {
+                    Map<String, Object> functionMap =
+                            jsFunctionRegistrar.getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
+                    functionMap.forEach(bindings::putMember);
+                }
+                removeDefaultFunctions(context);
+                JsGraalGraphBuilder.contextForJs.set(authenticationContext);
+
+                String identifier = UUID.randomUUID().toString();
+                Optional<JSExecutionMonitorData> optionalScriptExecutionData =
+                        Optional.ofNullable(retrieveAuthScriptExecutionMonitorData(authenticationContext));
+                try {
+                    startScriptExecutionMonitor(identifier, authenticationContext,
+                            optionalScriptExecutionData.orElse(null));
+                    result = jsFunction.apply(context, params);
+                } finally {
+                    optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
+                }
+                optionalScriptExecutionData.ifPresent(
+                        scriptExecutionData -> storeAuthScriptExecutionMonitorData(authenticationContext,
+                                scriptExecutionData));
+
+                JsGraalGraphBuilderFactory.persistCurrentContext(authenticationContext, context);
+
+                AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
+                if (canInfuse(executingNode)) {
+                    infuse(executingNode, dynamicallyBuiltBaseNode.get());
+                }
+
+            } catch (Throwable e) {
+                //We need to catch all the javascript errors here, then log and handle.
+                log.error("Error in executing the javascript for service provider : " +
+                        authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
+                        jsFunction.getSource(), e);
+                AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
+                FailNode failNode = new FailNode();
+                attachToLeaf(executingNode, failNode);
+            } finally {
+                contextForJs.remove();
+                dynamicallyBuiltBaseNode.remove();
+                clearCurrentBuilder(context);
             }
             return result;
         }
@@ -992,7 +1056,6 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                                 ", error: " + evalResult.getErrorMessage());
                         AuthGraphNode executingNode = (AuthGraphNode) authenticationContext
                                 .getProperty(PROP_CURRENT_NODE);
-                        // Create a proper FailNode with error information so user sees error page
                         FailNode failNode = new FailNode();
                         failNode.setShowErrorPage(true);
                         failNode.getFailureData().put("errorCode", "18013");
@@ -1032,12 +1095,10 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 }
 
             } catch (Throwable e) {
-                // We need to catch all errors here, then log and handle.
                 log.error("Error in remote JavaScript execution for service provider : " +
                         authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
                         jsFunction.getSource(), e);
                 AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
-                // Create a proper FailNode with error information so user sees error page
                 FailNode failNode = new FailNode();
                 failNode.setShowErrorPage(true);
                 failNode.getFailureData().put("errorCode", "18013");
@@ -1049,93 +1110,6 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 contextForJs.remove();
                 dynamicallyBuiltBaseNode.remove();
                 clearCurrentBuilder();
-            }
-            return result;
-        }
-
-        /**
-         * Execute JavaScript locally in the same JVM.
-         * This is the original execution path.
-         *
-         * @param authenticationContext The authentication context.
-         * @param params                The parameters to pass to the function.
-         * @return The result of the execution.
-         */
-        private Object evaluateLocal(AuthenticationContext authenticationContext, Object... params) {
-
-            JsGraalGraphBuilder graphBuilder = JsGraalGraphBuilder.this;
-            Object result = null;
-            try {
-                currentBuilder.set(graphBuilder);
-                JsGraalGraphBuilderFactory.restoreCurrentContext(authenticationContext, context);
-                Context context = getContext();
-                Value bindings = context.getBindings(POLYGLOT_LANGUAGE);
-
-                bindings.putMember(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuterInAsyncEvent());
-                bindings.putMember(JS_FUNC_SEND_ERROR, new SendErrorAsyncFunctionImpl());
-                bindings.putMember(JS_AUTH_FAILURE, new FailAuthenticationFunctionImpl());
-                bindings.putMember(JS_FUNC_SHOW_PROMPT, new JsGraalPromptExecutorImpl());
-                bindings.putMember(JS_FUNC_LOAD_FUNC_LIB, new JsGraalLoadExecutorImpl());
-                bindings.putMember(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
-                /*
-                 TODO: Need to improve the JsSerializable implementation to persist this function in the context
-                  without re-evaluating.
-                 */
-                context.eval(Source
-                        .newBuilder(POLYGLOT_LANGUAGE,
-                                FrameworkServiceDataHolder.getInstance().getCodeForSecretsFunction(),
-                                POLYGLOT_SOURCE)
-                        .build());
-                JsFunctionRegistry jsFunctionRegistrar = FrameworkServiceDataHolder.getInstance()
-                        .getJsFunctionRegistry();
-                if (jsFunctionRegistrar != null) {
-                    Map<String, Object> functionMap =
-                            jsFunctionRegistrar.getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
-                    functionMap.forEach(bindings::putMember);
-                }
-                removeDefaultFunctions(context);
-                JsGraalGraphBuilder.contextForJs.set(authenticationContext);
-
-                String identifier = UUID.randomUUID().toString();
-                Optional<JSExecutionMonitorData> optionalScriptExecutionData =
-                        Optional.ofNullable(retrieveAuthScriptExecutionMonitorData(authenticationContext));
-                try {
-                    startScriptExecutionMonitor(identifier, authenticationContext,
-                            optionalScriptExecutionData.orElse(null));
-                    result = jsFunction.apply(context, params);
-                } finally {
-                    optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
-                }
-                optionalScriptExecutionData.ifPresent(
-                        scriptExecutionData ->
-                                storeAuthScriptExecutionMonitorData(authenticationContext,
-                                scriptExecutionData));
-
-                JsGraalGraphBuilderFactory.persistCurrentContext(authenticationContext, context);
-
-                AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
-                if (canInfuse(executingNode)) {
-                    infuse(executingNode, dynamicallyBuiltBaseNode.get());
-                }
-
-            } catch (Throwable e) {
-                //We need to catch all the javascript errors here, then log and handle.
-                log.error("Error in executing the javascript for service provider : " +
-                        authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
-                        jsFunction.getSource(), e);
-                AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
-                // Create a proper FailNode with error information so user sees error page
-                FailNode failNode = new FailNode();
-                failNode.setShowErrorPage(true);
-                failNode.getFailureData().put("errorCode", "18013");
-                String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getName();
-                failNode.getFailureData().put("errorMessage", "Script execution error: " + errorMessage);
-                failNode.getFailureData().put("errorType", e.getClass().getSimpleName());
-                attachToLeaf(executingNode, failNode);
-            } finally {
-                contextForJs.remove();
-                dynamicallyBuiltBaseNode.remove();
-                clearCurrentBuilder(context);
             }
             return result;
         }
