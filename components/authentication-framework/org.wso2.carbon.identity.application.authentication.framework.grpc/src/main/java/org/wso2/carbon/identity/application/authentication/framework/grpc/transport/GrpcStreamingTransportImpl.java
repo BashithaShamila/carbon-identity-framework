@@ -25,7 +25,7 @@ import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.CallbackServer;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ProxyTypeResolver;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineConstants;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ProtobufSerializer;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.Serializer;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineTransport;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyResponse;
@@ -452,7 +452,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             // Deserialize arguments
             List<Object> args = new ArrayList<>();
             for (SerializedValue sv : request.getArgumentsList()) {
-                args.add(ProtobufSerializer.fromProto(sv));
+                args.add(Serializer.fromProto(sv));
             }
 
             // Invoke host function
@@ -498,12 +498,12 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                     java.util.Map<String, Object> proxyCache = remoteEngine.getProxyObjectCache();
                     System.out.println("[GrpcStreaming] Setting proxy cache ThreadLocal - cache size: " +
                             (proxyCache != null ? proxyCache.size() : "NULL"));
-                    ProtobufSerializer.setSessionProxyCache(proxyCache);
+                    Serializer.setSessionProxyCache(proxyCache);
                 }
                 try {
-                    serializedResult = ProtobufSerializer.toProto(result);
+                    serializedResult = Serializer.toProto(result);
                 } finally {
-                    ProtobufSerializer.clearSessionProxyCache();
+                    Serializer.clearSessionProxyCache();
                 }
             }
 
@@ -582,7 +582,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                         extractMemberKeys(keys, responseBuilder);
                     }
                 } else {
-                    responseBuilder.setValue(ProtobufSerializer.toProto(value));
+                    responseBuilder.setValue(Serializer.toProto(value));
                 }
             }
 
@@ -628,7 +628,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
         try {
             long cpsDeserStart = System.currentTimeMillis();
-            Object javaValue = ProtobufSerializer.fromProto(request.getValue());
+            Object javaValue = Serializer.fromProto(request.getValue());
             long cpsExecStart = System.currentTimeMillis();
             boolean success = handler.setContextProperty(propertyPath, javaValue);
             long cpsExecEnd = System.currentTimeMillis();

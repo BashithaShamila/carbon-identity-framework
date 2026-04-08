@@ -167,13 +167,13 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                         hostFunctions.size() + " host functions");
             }
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
-                // Skip "context" -- JsGraalAuthenticationContext is not ProtobufSerializer-compatible.
+                // Skip "context" -- JsGraalAuthenticationContext is not Serializer-compatible.
                 // Context state is sent as structured ContextData and the External accesses it
                 // via DynamicContextProxy callbacks. Serializing it here causes a toString()
                 // fallback with WARN log. If this binding is ever needed, implement a proper
                 // toProto() conversion for JsGraalAuthenticationContext first.
                 if (!RemoteEngineConstants.CONTEXT_BINDING_KEY.equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
-                    requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(entry.getValue()));
+                    requestBuilder.putBindings(entry.getKey(), Serializer.toProto(entry.getValue()));
                 }
             }
 
@@ -230,12 +230,12 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 // Update bindings from response
                 Map<String, Object> updatedBindings = new HashMap<>();
                 for (Map.Entry<String, SerializedValue> entry : response.getUpdatedBindingsMap().entrySet()) {
-                    Object deserialized = ProtobufSerializer.fromProto(entry.getValue());
+                    Object deserialized = Serializer.fromProto(entry.getValue());
                     updatedBindings.put(entry.getKey(), deserialized);
                     bindings.put(entry.getKey(), deserialized);
                 }
 
-                Object result = ProtobufSerializer.fromProto(response.getResult());
+                Object result = Serializer.fromProto(response.getResult());
                 long tResponseProcessed = System.currentTimeMillis();
 
                 long isElapsed = tResponseProcessed - startTime;
@@ -360,7 +360,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                                 (arguments[i] != null ? arguments[i].getClass().getName() : "null"));
                     }
                     // Replace JsGraalAuthenticationContext with a marker string instead of
-                    // serializing the full object (which is not ProtobufSerializer-compatible
+                    // serializing the full object (which is not Serializer-compatible
                     // and causes a toString() fallback with WARN log). The External detects
                     // this marker via sv.getStringValue().contains("JsGraalAuthenticationContext")
                     // and substitutes its local DynamicContextProxy. We must preserve the
@@ -368,10 +368,10 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     // httpGet's onSuccess(context, data) would receive (data, undefined)).
                     if (arguments[i] instanceof JsGraalAuthenticationContext) {
                         requestBuilder.addArguments(
-                                ProtobufSerializer.toProto(RemoteEngineConstants.CONTEXT_PLACEHOLDER));
+                                Serializer.toProto(RemoteEngineConstants.CONTEXT_PLACEHOLDER));
                         continue;
                     }
-                    requestBuilder.addArguments(ProtobufSerializer.toProto(arguments[i]));
+                    requestBuilder.addArguments(Serializer.toProto(arguments[i]));
                 }
             }
 
@@ -385,7 +385,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             }
             int bindingsAdded = 0;
             for (Map.Entry<String, Object> entry : bindings.entrySet()) {
-                // Skip "context" -- JsGraalAuthenticationContext is not ProtobufSerializer-compatible.
+                // Skip "context" -- JsGraalAuthenticationContext is not Serializer-compatible.
                 // Context state is sent as structured ContextData and the External accesses it
                 // via DynamicContextProxy callbacks. Serializing it here causes a toString()
                 // fallback with WARN log. If this binding is ever needed, implement a proper
@@ -396,7 +396,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                         log.debug("[RemoteJsEngine] Serializing binding: " + entry.getKey() + " = " +
                                 (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
                     }
-                    requestBuilder.putBindings(entry.getKey(), ProtobufSerializer.toProto(value));
+                    requestBuilder.putBindings(entry.getKey(), Serializer.toProto(value));
                     bindingsAdded++;
                 }
             }
@@ -432,12 +432,12 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                 // Update bindings from response
                 Map<String, Object> updatedBindings = new HashMap<>();
                 for (Map.Entry<String, SerializedValue> entry : response.getUpdatedBindingsMap().entrySet()) {
-                    Object deserialized = ProtobufSerializer.fromProto(entry.getValue());
+                    Object deserialized = Serializer.fromProto(entry.getValue());
                     updatedBindings.put(entry.getKey(), deserialized);
                     bindings.put(entry.getKey(), deserialized);
                 }
 
-                Object result = ProtobufSerializer.fromProto(response.getResult());
+                Object result = Serializer.fromProto(response.getResult());
                 long tResponseProcessed = System.currentTimeMillis();
 
                 long isElapsed = tResponseProcessed - startTime;

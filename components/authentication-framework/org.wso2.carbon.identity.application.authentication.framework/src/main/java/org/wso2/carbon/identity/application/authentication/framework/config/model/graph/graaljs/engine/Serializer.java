@@ -39,15 +39,15 @@ import java.util.Map;
  * SerializedValue.
  * Leverages existing GraalSerializer patterns for JavaScript value conversion.
  */
-public class ProtobufSerializer {
+public class Serializer {
 
-    private static final Log log = LogFactory.getLog(ProtobufSerializer.class);
+    private static final Log log = LogFactory.getLog(Serializer.class);
 
     // Thread-local session proxy cache for storing complex objects
     // This is set per-session by RemoteJsEngine and used during serialization
     private static final ThreadLocal<Map<String, Object>> sessionProxyCache = new ThreadLocal<>();
 
-    private ProtobufSerializer() {
+    private Serializer() {
         // Utility class
     }
 
@@ -162,11 +162,11 @@ public class ProtobufSerializer {
         if (serializable instanceof List) {
             @SuppressWarnings("unchecked")
             List<Object> listValue = (List<Object>) serializable;
-            System.out.println("[ProtobufSerializer] Serializing List with " + listValue.size() + " elements");
+            System.out.println("[Serializer] Serializing List with " + listValue.size() + " elements");
             SerializedArray.Builder arrayBuilder = SerializedArray.newBuilder();
             for (int i = 0; i < listValue.size(); i++) {
                 Object element = listValue.get(i);
-                System.out.println("[ProtobufSerializer] List element[" + i + "] type: " +
+                System.out.println("[Serializer] List element[" + i + "] type: " +
                         (element != null ? element.getClass().getName() : "null"));
                 arrayBuilder.addElements(toProto(element));
             }
@@ -261,7 +261,7 @@ public class ProtobufSerializer {
         // only that property on-demand.
         Map<String, Object> cache = getSessionProxyCache();
         boolean shouldProxy = ProxyTypeResolver.shouldUseProxyPattern(serializable);
-        System.out.println("[ProtobufSerializer] POJO check for " + serializable.getClass().getName() +
+        System.out.println("[Serializer] POJO check for " + serializable.getClass().getName() +
                 " - cache=" + (cache != null ? "available" : "NULL") +
                 " shouldProxy=" + shouldProxy);
 
@@ -272,7 +272,7 @@ public class ProtobufSerializer {
             // Store the actual object in the session cache
             cache.put(referenceId, serializable);
 
-            System.out.println("[ProtobufSerializer] ✓ Created proxy marker for " +
+            System.out.println("[Serializer] ✓ Created proxy marker for " +
                     serializable.getClass().getName() + " with referenceId: " + referenceId);
             if (log.isDebugEnabled()) {
                 log.debug("Created proxy marker for " + serializable.getClass().getName() +

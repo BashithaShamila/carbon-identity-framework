@@ -21,7 +21,7 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 /**
  * Unified proxy type detection for the remote JS engine.
  * Consolidates proxy type detection patterns from:
- * - ProtobufSerializer.shouldUseProxyPattern() — POJO proxy caching (edge case #11)
+ * - Serializer.shouldUseProxyPattern() — POJO proxy caching (edge case #11)
  * - HostCallbackServer.isProxyType() / getProxyType() — callback response proxy detection
  * - GrpcStreamingTransportImpl.isProxyType() / getProxyType() — streaming response proxy detection
  *
@@ -43,7 +43,7 @@ public final class ProxyTypeResolver {
 
     /**
      * Check if an object should use the lazy proxy pattern instead of eager serialization.
-     * Used by ProtobufSerializer for POJO caching (edge case #11).
+     * Used by Serializer for POJO caching (edge case #11).
      *
      * Criteria:
      * - Class name contains ".User", ".user.", ".model.", or ".domain."
