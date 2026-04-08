@@ -495,120 +495,31 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         if (eventsMap == null) {
             return;
         }
-        if (log.isDebugEnabled()) {
-            log.debug("[addEventListeners] Received eventsMap with " + eventsMap.size() + " entries");
-        }
         eventsMap.forEach((key, value) -> {
-            if (log.isDebugEnabled()) {
-                log.debug("[addEventListeners] Processing event: " + key + ", value type: " +
-                        (value != null ? value.getClass().getName() : "null") +
-                        ", isValue: " + (value instanceof Value) +
-                        ", isMap: " + (value instanceof Map));
-            }
-
-            // Check if it's a PolyglotMapAndFunction - detect by class name since it's not instanceof Value
-            if (value != null && value.getClass().getName().contains("PolyglotMapAndFunction")) {
-                if (log.isDebugEnabled()) {
-                    log.debug("[addEventListeners] Detected PolyglotMapAndFunction for event: " + key);
-                }
-                try {
-                    // Try to convert to Value using current Context
-                    Context currentContext = Context.getCurrent();
-                    if (currentContext != null) {
-                        Value valueAsValue = currentContext.asValue(value);
-                        if (valueAsValue.canExecute()) {
-                            if (log.isDebugEnabled()) {
-                                log.debug("[addEventListeners] Successfully converted to executable Value");
-                            }
-                            GraalSerializableJsFunction jsFunction = 
-                                GraalSerializableJsFunction.toSerializableForm(valueAsValue);
-                            if (jsFunction != null) {
-                                decisionNode.addGenericFunction(key, jsFunction);
-                                String eventMessage = "[addEventListeners] Successfully serialized " +
-                                    "PolyglotMapAndFunction for event: " + key;
-                                if (log.isDebugEnabled()) {
-                                    log.debug(eventMessage);
-                                }
-                                return; // Skip further processing
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    log.error("[addEventListeners] Failed to convert PolyglotMapAndFunction to Value", e);
-                }
-            }
-
-            if (value instanceof GraalSerializableJsFunction) {
-                decisionNode.addGenericFunction(key, (GraalSerializableJsFunction) value);
-            } else if (value instanceof String) {
-                // Handle function source code sent directly as String from sidecar.
-                String source = (String) value;
-                if (source.trim().startsWith("function") || source.contains("=>")) {
-                    GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
-                    decisionNode.addGenericFunction(key, jsFunction);
-                    if (log.isDebugEnabled()) {
-                        log.debug("Created GraalSerializableJsFunction from String source for event: " + key);
-                    }
-                } else {
-                    log.error("Event handler : " + key + " is a String but doesn't look like a function: "
-                            + source);
-                }
-            } else if (value instanceof Map) {
-                // Handle function references from remote sidecar - they may come as Maps with
-                // source code.
-                Map<?, ?> funcMap = (Map<?, ?>) value;
-                Object sourceObj = funcMap.get("source");
-                if (sourceObj != null) {
-                    String source = sourceObj.toString();
-                    GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
-                    decisionNode.addGenericFunction(key, jsFunction);
-                    if (log.isDebugEnabled()) {
-                        log.debug("Created GraalSerializableJsFunction from Map source for event: " + key);
-                    }
-                } else {
-                    // Try to find any string value that looks like function source.
-                    String funcSource = findFunctionSourceInMap(funcMap);
-                    if (funcSource != null) {
-                        GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(funcSource);
+            if ((!(value instanceof GraalSerializableJsFunction))) {
+                if (value instanceof String) {
+                    // Remote mode: sidecar serializes JS functions as source code strings.
+                    String source = (String) value;
+                    if (source.trim().startsWith("function") || source.contains("=>")) {
+                        GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
                         decisionNode.addGenericFunction(key, jsFunction);
-                        if (log.isDebugEnabled()) {
-                            log.debug("Created GraalSerializableJsFunction from Map value for event: " + key);
-                        }
                     } else {
-                        log.error("Event handler : " + key + " is a Map but has no usable function source. Keys: " +
-                                funcMap.keySet() + ", values: " + funcMap.values());
+                        log.error("Event handler : " + key + " is a String but doesn't look like a function: "
+                                + source);
+                    }
+                } else {
+                    // Local mode: value is a GraalJS Value object.
+                    GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
+                    if (jsFunction != null) {
+                        decisionNode.addGenericFunction(key, jsFunction);
+                    } else {
+                        log.error("Event handler : " + key + " is not a function : " + value);
                     }
                 }
             } else {
-                // Try original path for local GraalVM Value objects.
-                GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
-                if (jsFunction != null) {
-                    decisionNode.addGenericFunction(key, jsFunction);
-                } else {
-                    log.error("Event handler : " + key + " is not a function, type: " +
-                            (value != null ? value.getClass().getName() : "null") + ", value: " + value);
-                }
+                decisionNode.addGenericFunction(key, (GraalSerializableJsFunction) value);
             }
         });
-    }
-
-    /**
-     * Finds function source code within a Map by looking for string values that
-     * look like functions.
-     *
-     * @param map The map to search.
-     * @return The function source if found, null otherwise.
-     */
-    private static String findFunctionSourceInMap(Map<?, ?> map) {
-        for (Object val : map.values()) {
-            if (val instanceof String) {
-                String str = (String) val;
-                if (str.trim().startsWith("function") || str.contains("=>")) {
-                    return str;
-                }
-            }
-        }
-        return null;
     }
 
     private static void addHandlers(ShowPromptNode showPromptNode, Map<String, Object> handlersMap) {
@@ -617,55 +528,28 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             return;
         }
         handlersMap.forEach((key, value) -> {
-            if (value instanceof GraalSerializableJsFunction) {
-                showPromptNode.addGenericHandler(key, (GraalSerializableJsFunction) value);
-            } else if (value instanceof String) {
-                // Handle function source code sent directly as String from sidecar.
-                String source = (String) value;
-                if (source.trim().startsWith("function") || source.contains("=>")) {
-                    GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
-                    showPromptNode.addGenericHandler(key, jsFunction);
-                    if (log.isDebugEnabled()) {
-                        log.debug("Created GraalSerializableJsFunction from String source for handler: " + key);
-                    }
-                } else {
-                    log.error("Handler : " + key + " is a String but doesn't look like a function: " + source);
-                }
-            } else if (value instanceof Map) {
-                // Handle function references from remote sidecar - they may come as Maps with
-                // source code.
-                Map<?, ?> funcMap = (Map<?, ?>) value;
-                Object sourceObj = funcMap.get("source");
-                if (sourceObj != null) {
-                    String source = sourceObj.toString();
-                    GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
-                    showPromptNode.addGenericHandler(key, jsFunction);
-                    if (log.isDebugEnabled()) {
-                        log.debug("Created GraalSerializableJsFunction from Map source for handler: " + key);
-                    }
-                } else {
-                    // Try to find any string value that looks like function source.
-                    String funcSource = findFunctionSourceInMap(funcMap);
-                    if (funcSource != null) {
-                        GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(funcSource);
+            if (!(value instanceof GraalSerializableJsFunction)) {
+                if (value instanceof String) {
+                    // Remote mode: sidecar serializes JS functions as source code strings.
+                    String source = (String) value;
+                    if (source.trim().startsWith("function") || source.contains("=>")) {
+                        GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
                         showPromptNode.addGenericHandler(key, jsFunction);
-                        if (log.isDebugEnabled()) {
-                            log.debug("Created GraalSerializableJsFunction from Map value for handler: " + key);
-                        }
                     } else {
-                        log.error("Handler : " + key + " is a Map but has no usable function source. Keys: " +
-                                funcMap.keySet() + ", values: " + funcMap.values());
+                        log.error("Event handler : " + key + " is a String but doesn't look like a function: "
+                                + source);
+                    }
+                } else {
+                    // Local mode: value is a GraalJS Value object.
+                    GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
+                    if (jsFunction != null) {
+                        showPromptNode.addGenericHandler(key, jsFunction);
+                    } else {
+                        log.error("Event handler : " + key + " is not a function : " + value);
                     }
                 }
             } else {
-                // Try original path for local GraalVM Value objects.
-                GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
-                if (jsFunction != null) {
-                    showPromptNode.addGenericHandler(key, jsFunction);
-                } else {
-                    log.error("Handler : " + key + " is not a function, type: " +
-                            (value != null ? value.getClass().getName() : "null") + ", value: " + value);
-                }
+                showPromptNode.addGenericHandler(key, (GraalSerializableJsFunction) value);
             }
         });
     }
