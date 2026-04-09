@@ -22,8 +22,8 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
  * Unified proxy type detection for the remote JS engine.
  * Consolidates proxy type detection patterns from:
  * - Serializer.shouldUseProxyPattern() — POJO proxy caching (edge case #11)
- * - HostCallbackServer.isProxyType() / getProxyType() — callback response proxy detection
- * - GrpcStreamingTransportImpl.isProxyType() / getProxyType() — streaming response proxy detection
+ * - ExternalCallbackHandler — callback response proxy detection
+ * - GrpcStreamingTransportImpl — streaming response proxy detection
  *
  * Two distinct concerns:
  * 1. "Should this POJO use the lazy proxy pattern for serialization?" (shouldUseProxyPattern)
@@ -92,7 +92,7 @@ public final class ProxyTypeResolver {
 
     /**
      * Check if a value is a JS wrapper proxy type (JsGraal*, JsServlet*, JsStep*, etc.).
-     * Used by HostCallbackServer and GrpcStreamingTransportImpl for callback/streaming
+     * Used by ExternalCallbackHandler and GrpcStreamingTransportImpl for callback/streaming
      * response serialization to determine if a host function return value should be
      * sent as a proxy reference rather than eagerly serialized.
      *

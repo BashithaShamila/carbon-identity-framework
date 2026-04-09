@@ -46,7 +46,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * server.
  * <p>
  * This implementation is decoupled from specific transport mechanisms
- * through the RemoteEngineTransport and CallbackServer abstractions.
+ * through the RemoteEngineTransport abstraction.
  * <p>
  * Responsibilities are delegated to focused collaborators:
  * <ul>
@@ -59,7 +59,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * ThreadLocal context (contextForJs, dynamicallyBuiltBaseNode, currentBuilder, CarbonContext).
  * No thread-local setup/teardown is needed.
  */
-public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHandler {
+public class RemoteJsEngine implements JsEngine {
 
     private static final Log log = LogFactory.getLog(RemoteJsEngine.class);
 
@@ -485,13 +485,12 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         }
     }
 
-    // ======================== HostFunctionHandler Implementation ========================
+    // ======================== Callback Handling ========================
 
     /**
      * Handle host function callback from External.
      * This is called when the External JavaScript invokes a host function.
      */
-    @Override
     public Object invokeHostFunction(String functionName, Object... args) throws Exception {
         if (log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] invokeHostFunction called: " + functionName + " with " +
@@ -592,7 +591,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         throw new NoSuchMethodException("Could not find invokable method for: " + functionName);
     }
 
-    @Override
     public String storeObjectReference(Object obj) {
         return proxyReferenceCache.storeObjectReference(obj);
     }
@@ -602,7 +600,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      * This navigates the property path on the real JsGraalAuthenticationContext.
      * Also supports host function return references via "__hostref__" prefix.
      */
-    @Override
     public Object getContextProperty(String propertyPath) throws Exception {
         log.debug("[RemoteJsEngine] getContextProperty called: " + propertyPath + ", session: " + sessionId);
 
@@ -642,7 +639,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
      * Also supports host function return references via "__hostref__" prefix and
      * proxy object references via "__proxyref__" prefix.
      */
-    @Override
     public boolean setContextProperty(String propertyPath, Object value) throws Exception {
         if (log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] setContextProperty called: " + propertyPath + " = " +
@@ -678,7 +674,7 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
 
     /**
      * Get the proxy object cache for this session.
-     * Used by HostCallbackServer to set the ThreadLocal before serialization.
+     * Used by ExternalCallbackHandler to set the ThreadLocal before serialization.
      */
     public Map<String, Object> getProxyObjectCache() {
         return proxyReferenceCache.getCache();

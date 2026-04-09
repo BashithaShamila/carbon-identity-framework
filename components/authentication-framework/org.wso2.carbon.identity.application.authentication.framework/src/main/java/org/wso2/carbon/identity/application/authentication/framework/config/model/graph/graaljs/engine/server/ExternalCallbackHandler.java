@@ -22,7 +22,7 @@ import io.grpc.stub.StreamObserver;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.graalvm.polyglot.proxy.ProxyObject;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.CallbackServer.HostFunctionHandler;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteJsEngine;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.Serializer;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ProxyTypeResolver;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineConstants;
@@ -44,10 +44,10 @@ import java.util.Map;
  * Handles External callbacks received on the bidirectional gRPC stream:
  * host function invocations, context property reads, and context property writes.
  * <p>
- * Thread model: Methods are invoked on the callback executor thread (not the gRPC event thread).
+ * Thread model: Methods are invoked inline on the IS HTTP thread (Thread A) from the message loop.
  * Each method sends its response back on the bidirectional stream via synchronized write.
  * <p>
- * This class is stateless — all session context (handler, stream, lock) is passed per-call.
+ * This class is stateless — all session context (engine, stream, lock) is passed per-call.
  */
 class ExternalCallbackHandler {
 
@@ -68,7 +68,7 @@ class ExternalCallbackHandler {
      * @param streamLock The lock object for synchronized stream writes.
      */
     void handleHostFunction(String sessionId, HostFunctionRequest request,
-                            HostFunctionHandler handler,
+                            RemoteJsEngine handler,
                             StreamObserver<StreamMessage> outbound, Object streamLock) {
 
         String functionName = request.getFunctionName();
@@ -118,19 +118,12 @@ class ExternalCallbackHandler {
                                 .build())
                         .build();
             } else {
-                // CRITICAL FIX: Set proxy cache ThreadLocal before serialization
-                // This enables lazy-loading proxy pattern for complex objects (e.g., User arrays)
-                if (handler instanceof org.wso2.carbon.identity.application.authentication.framework
-                        .config.model.graph.graaljs.engine.RemoteJsEngine) {
-                    org.wso2.carbon.identity.application.authentication.framework
-                            .config.model.graph.graaljs.engine.RemoteJsEngine remoteEngine =
-                            (org.wso2.carbon.identity.application.authentication.framework
-                                    .config.model.graph.graaljs.engine.RemoteJsEngine) handler;
-                    Map<String, Object> proxyCache = remoteEngine.getProxyObjectCache();
-                    System.out.println("[GrpcStreaming] Setting proxy cache ThreadLocal - cache size: " +
-                            (proxyCache != null ? proxyCache.size() : "NULL"));
-                    Serializer.setSessionProxyCache(proxyCache);
-                }
+                // CRITICAL: Set proxy cache ThreadLocal before serialization.
+                // This enables lazy-loading proxy pattern for complex objects (e.g., User arrays).
+                Map<String, Object> proxyCache = handler.getProxyObjectCache();
+                System.out.println("[GrpcStreaming] Setting proxy cache ThreadLocal - cache size: " +
+                        (proxyCache != null ? proxyCache.size() : "NULL"));
+                Serializer.setSessionProxyCache(proxyCache);
                 try {
                     serializedResult = Serializer.toProto(result);
                 } finally {
@@ -181,7 +174,7 @@ class ExternalCallbackHandler {
      * @param streamLock The lock object for synchronized stream writes.
      */
     void handleContextProperty(String sessionId, ContextPropertyRequest request,
-                               HostFunctionHandler handler,
+                               RemoteJsEngine handler,
                                StreamObserver<StreamMessage> outbound, Object streamLock) {
 
         String propertyPath = request.getPropertyPath();
@@ -265,7 +258,7 @@ class ExternalCallbackHandler {
      * @param streamLock The lock object for synchronized stream writes.
      */
     void handleContextPropertySet(String sessionId, ContextPropertySetRequest request,
-                                  HostFunctionHandler handler,
+                                  RemoteJsEngine handler,
                                   StreamObserver<StreamMessage> outbound, Object streamLock) {
 
         String propertyPath = request.getPropertyPath();

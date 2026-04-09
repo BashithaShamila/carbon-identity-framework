@@ -58,33 +58,33 @@ public interface RemoteEngineTransport extends Closeable {
     ExecuteCallbackResponse sendExecuteCallback(ExecuteCallbackRequest request) throws IOException;
 
     /**
-     * Send an evaluation request along with the callback handler for this session.
-     * In bidirectional streaming mode, the handler is captured in the stream closure,
-     * eliminating the need for session-based handler registration/lookup maps.
+     * Send an evaluation request along with the remote engine for this session.
+     * In bidirectional streaming mode, the engine is captured in the stream closure
+     * for handling callbacks (host functions, context property access) inline.
      *
      * @param request The evaluation request containing script and bindings.
-     * @param handler The callback handler for host function invocations on this session.
+     * @param engine  The remote engine for handling callbacks on this session.
      * @return The evaluation response with results and updated bindings.
      * @throws IOException If communication with the remote engine fails.
      */
     default EvaluateResponse sendEvaluate(EvaluateRequest request,
-                                          CallbackServer.HostFunctionHandler handler) throws IOException {
+                                          RemoteJsEngine engine) throws IOException {
 
         return sendEvaluate(request);
     }
 
     /**
-     * Send a callback execution request along with the callback handler for this session.
-     * In bidirectional streaming mode, the handler is captured in the stream closure,
-     * eliminating the need for session-based handler registration/lookup maps.
+     * Send a callback execution request along with the remote engine for this session.
+     * In bidirectional streaming mode, the engine is captured in the stream closure
+     * for handling callbacks (host functions, context property access) inline.
      *
      * @param request The callback execution request containing function source and arguments.
-     * @param handler The callback handler for host function invocations on this session.
+     * @param engine  The remote engine for handling callbacks on this session.
      * @return The callback execution response with results and updated bindings.
      * @throws IOException If communication with the remote engine fails.
      */
     default ExecuteCallbackResponse sendExecuteCallback(ExecuteCallbackRequest request,
-                                                        CallbackServer.HostFunctionHandler handler) throws IOException {
+                                                        RemoteJsEngine engine) throws IOException {
 
         return sendExecuteCallback(request);
     }

@@ -22,8 +22,8 @@ import io.grpc.ManagedChannel;
 import io.grpc.stub.StreamObserver;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.CallbackServer;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineTransport;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteJsEngine;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.EvaluateRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.EvaluateResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ExecuteCallbackRequest;
@@ -42,8 +42,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * Bidirectional streaming gRPC transport implementation.
  * Manages per-session HTTP/2 stream lifecycle for script evaluation and callback execution.
  * <p>
- * Each {@link #sendEvaluate(EvaluateRequest, HostFunctionHandler)} /
- * {@link #sendExecuteCallback(ExecuteCallbackRequest, HostFunctionHandler)} call opens its own
+ * Each {@link #sendEvaluate(EvaluateRequest, RemoteJsEngine)} /
+ * {@link #sendExecuteCallback(ExecuteCallbackRequest, RemoteJsEngine)} call opens its own
  * HTTP/2 stream. This gives each session its own lock, its own stream lifecycle, and avoids
  * contention between concurrent sessions. The stream closes after the response is received.
  * <p>
@@ -60,7 +60,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li>All stream writes happen on Thread A — no concurrent writer contention</li>
  * </ul>
  */
-public class GrpcStreamingTransportImpl implements RemoteEngineTransport, CallbackServer {
+public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
 
     private static final Log log = LogFactory.getLog(GrpcStreamingTransportImpl.class);
 
@@ -100,7 +100,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
     }
 
     @Override
-    public EvaluateResponse sendEvaluate(EvaluateRequest request, HostFunctionHandler handler) throws IOException {
+    public EvaluateResponse sendEvaluate(EvaluateRequest request, RemoteJsEngine handler) throws IOException {
         String sessionId = request.getSessionId();
         long t0 = System.currentTimeMillis();
         System.out.println("[PERF] [" + t0 + "] IS EVALUATE_START session=" + sessionId +
@@ -188,7 +188,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
     @Override
     public ExecuteCallbackResponse sendExecuteCallback(ExecuteCallbackRequest request,
-                                                       HostFunctionHandler handler) throws IOException {
+                                                       RemoteJsEngine handler) throws IOException {
         String sessionId = request.getSessionId();
         long t0 = System.currentTimeMillis();
         System.out.println("[PERF] [" + t0 + "] IS EXEC_CALLBACK_START session=" + sessionId +
@@ -319,7 +319,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
             BlockingQueue<StreamMessage> messageQueue,
             AtomicReference<Throwable> streamError,
             String sessionId,
-            HostFunctionHandler handler,
+            RemoteJsEngine handler,
             StreamObserver<StreamMessage> outbound,
             Object streamLock,
             long deadline) throws IOException {
