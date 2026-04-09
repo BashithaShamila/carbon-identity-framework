@@ -318,7 +318,7 @@ class ExternalCallbackHandler {
             try {
                 outbound.onNext(message);
             } catch (Exception e) {
-                log.error("[GrpcStreaming] Error sending on stream: " + e.getMessage());
+                log.error("[GrpcStreaming] Error sending on stream: " + e.getMessage(), e);
             }
         }
     }

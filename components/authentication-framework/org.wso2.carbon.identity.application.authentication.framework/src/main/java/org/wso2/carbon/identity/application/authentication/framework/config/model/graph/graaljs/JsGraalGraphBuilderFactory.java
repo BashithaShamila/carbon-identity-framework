@@ -195,15 +195,20 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
     public JsGraalGraphBuilder createBuilder(AuthenticationContext authenticationContext,
             Map<Integer, StepConfig> stepConfigMap) {
 
-        Context context = needsLocalContext(authenticationContext) ? createEngine(authenticationContext) : null;
-        return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, context);
+        if (needsLocalContext(authenticationContext)) {
+            return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, createEngine(authenticationContext));
+        }
+        return new RemoteJsGraalGraphBuilder(authenticationContext, stepConfigMap);
     }
 
     public JsGraalGraphBuilder createBuilder(AuthenticationContext authenticationContext,
             Map<Integer, StepConfig> stepConfigMap, AuthGraphNode currentNode) {
 
-        Context context = needsLocalContext(authenticationContext) ? createEngine(authenticationContext) : null;
-        return new JsGraalGraphBuilder(authenticationContext, stepConfigMap, context, currentNode);
+        if (needsLocalContext(authenticationContext)) {
+            return new JsGraalGraphBuilder(authenticationContext, stepConfigMap,
+                    createEngine(authenticationContext), currentNode);
+        }
+        return new RemoteJsGraalGraphBuilder(authenticationContext, stepConfigMap, currentNode);
     }
 
     /**

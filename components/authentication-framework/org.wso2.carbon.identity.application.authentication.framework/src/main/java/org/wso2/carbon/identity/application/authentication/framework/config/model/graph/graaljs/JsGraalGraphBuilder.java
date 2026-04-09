@@ -43,9 +43,6 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.LongWaitNode;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.ShowPromptNode;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.StepConfigGraphNode;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.EvaluationResult;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngine;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngineFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
@@ -53,7 +50,6 @@ import org.wso2.carbon.identity.application.authentication.framework.internal.Fr
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -144,18 +140,6 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
     @Override
     public JsGraalGraphBuilder createWith(String script) {
 
-        // Resolve execution mode for this specific authentication context.
-        JsEngineFactory jsEngineFactory = JsEngineFactory.getInstance();
-        if (jsEngineFactory.resolveMode(authenticationContext) == JsEngineFactory.ExecutionMode.REMOTE) {
-            if (log.isDebugEnabled()) {
-                log.debug("[createWith] Using REMOTE execution mode via External");
-            }
-            return createWithRemote(script);
-        }
-
-        if (log.isDebugEnabled()) {
-            log.debug("[createWith] Using LOCAL execution mode");
-        }
         try {
             currentBuilder.set(this);
             Value bindings = context.getBindings(POLYGLOT_LANGUAGE);
@@ -231,141 +215,6 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         } finally {
             clearCurrentBuilder(context);
         }
-        return this;
-    }
-
-    /**
-     * Creates the graph with the given Script using remote External execution.
-     * This method sends the script to the External for evaluation and processes
-     * callback results.
-     *
-     * @param script the Dynamic authentication script.
-     * @return This builder.
-     */
-    @SuppressWarnings("unchecked")
-    private JsGraalGraphBuilder createWithRemote(String script) {
-
-        try (JsEngine jsEngine = JsEngineFactory.getInstance().createEngine(authenticationContext)) {
-            currentBuilder.set(this);
-            contextForJs.set(authenticationContext);
-
-            if (log.isDebugEnabled()) {
-                log.debug("[createWithRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
-                        ", contextId: " + authenticationContext.getContextIdentifier());
-            }
-
-            // Register host functions that the External can call back.
-            Map<String, Object> hostFunctions = new HashMap<>();
-            hostFunctions.put(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuter());
-            hostFunctions.put(JS_FUNC_SEND_ERROR, new SendErrorFunctionImpl());
-            hostFunctions.put(JS_FUNC_SHOW_PROMPT, new JsGraalPromptExecutorImpl());
-            hostFunctions.put(JS_FUNC_LOAD_FUNC_LIB, new JsGraalLoadExecutorImpl());
-            hostFunctions.put(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
-
-            JsFunctionRegistry jsFunctionRegistrar = FrameworkServiceDataHolder.getInstance().getJsFunctionRegistry();
-            if (jsFunctionRegistrar != null) {
-                hostFunctions.putAll(jsFunctionRegistrar.getSubsystemFunctionsMap(
-                        JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER));
-            }
-            jsEngine.registerHostFunctions(hostFunctions);
-            if (log.isDebugEnabled()) {
-                log.debug("[createWithRemote] Registered " + hostFunctions.size() + " host functions: " +
-                        hostFunctions.keySet());
-            }
-
-            // Build the complete script including require function, secrets, and main
-            // script.
-            String completeScript = FrameworkServiceDataHolder.getInstance().getCodeForRequireFunction() +
-                    "\n" +
-                    FrameworkServiceDataHolder.getInstance().getCodeForSecretsFunction() +
-                    "\n" +
-                    script +
-                    "\n" +
-                    // Call onLoginRequest with context placeholder - External will inject actual
-                    // context.
-                    JS_FUNC_ON_LOGIN_REQUEST + "(context);";
-
-            if (log.isDebugEnabled()) {
-                log.debug("[createWithRemote] Sending script (length: " + completeScript.length() +
-                        ") to External for evaluation");
-            }
-
-            // Build initial bindings (context will be created by External from ContextData).
-            Map<String, Object> initialBindings = new HashMap<>();
-
-            String identifier = UUID.randomUUID().toString();
-            Optional<JSExecutionMonitorData> optionalScriptExecutionData = Optional.empty();
-
-            try {
-                startScriptExecutionMonitor(identifier, authenticationContext);
-
-                // Evaluate script remotely.
-                EvaluationResult evalResult = jsEngine.evaluate(
-                        completeScript, "adaptive-script", initialBindings);
-
-                if (!evalResult.isSuccess()) {
-                    log.error("[createWithRemote] Script evaluation failed: " + evalResult.getErrorMessage());
-                    result.setBuildSuccessful(false);
-                    result.setErrorReason("Error in executing the Javascript. " + evalResult.getErrorMessage());
-                    return this;
-                }
-
-                if (log.isDebugEnabled()) {
-                    log.debug("[createWithRemote] Script evaluation successful, elapsed: " +
-                            evalResult.getElapsedMs() + "ms");
-                }
-
-                // Update bindings from External response.
-                if (evalResult.getUpdatedBindings() != null) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("[createWithRemote] Updating bindings from External: " +
-                                evalResult.getUpdatedBindings().keySet());
-                    }
-                    for (Map.Entry<String, Object> entry : evalResult.getUpdatedBindings().entrySet()) {
-                        // Convert binding to serializable form for persistence.
-                        Object value = entry.getValue();
-                        if (value instanceof String) {
-                            String strValue = (String) value;
-                            // Check if it's a function source.
-                            if (strValue.trim().startsWith("function") || strValue.contains("=>")) {
-                                value = new GraalSerializableJsFunction(strValue);
-                            }
-                        }
-                        jsEngine.putBinding(entry.getKey(), value);
-                    }
-                }
-
-            } finally {
-                optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
-            }
-
-            optionalScriptExecutionData.ifPresent(
-                    scriptExecutionData ->
-                            storeAuthScriptExecutionMonitorData(authenticationContext,
-                            scriptExecutionData));
-
-            if (log.isDebugEnabled()) {
-                log.debug("[createWithRemote] Script execution completed for SP: " +
-                        authenticationContext.getServiceProviderName());
-            }
-
-            // Persist bindings for later callback execution.
-            // Note: With remote execution, we persist the updated bindings from External.
-            Map<String, Object> persistableBindings = jsEngine.getBindings();
-            authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", persistableBindings);
-            if (log.isDebugEnabled()) {
-                log.debug("[createWithRemote] Persisted " + persistableBindings.size() + " bindings");
-            }
-
-        } catch (Exception e) {
-            log.error("[createWithRemote] Error during remote script evaluation", e);
-            result.setBuildSuccessful(false);
-            result.setErrorReason("Error in remote JavaScript execution: " + e.getMessage());
-        } finally {
-            currentBuilder.remove();
-            contextForJs.remove();
-        }
-
         return this;
     }
 
@@ -779,12 +628,6 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 return jsFunction.getSource();
             }
 
-            // Route to remote External if configured.
-            JsEngineFactory jsEngineFactory = JsEngineFactory.getInstance();
-            if (jsEngineFactory.resolveMode(authenticationContext) == JsEngineFactory.ExecutionMode.REMOTE) {
-                return evaluateRemote(authenticationContext, params);
-            }
-
             try {
                 currentBuilder.set(graphBuilder);
                 JsGraalGraphBuilderFactory.restoreCurrentContext(authenticationContext, context);
@@ -852,164 +695,6 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
             }
             return result;
         }
-
-        /**
-         * Execute JavaScript in a remote External process.
-         * This provides isolation from the main JVM.
-         *
-         * @param authenticationContext The authentication context.
-         * @param params                The parameters to pass to the function.
-         * @return The result of the execution.
-         */
-        @SuppressWarnings("unchecked")
-        private Object evaluateRemote(AuthenticationContext authenticationContext, Object... params) {
-
-            JsGraalGraphBuilder graphBuilder = JsGraalGraphBuilder.this;
-            Object result = null;
-
-            try (JsEngine jsEngine = JsEngineFactory.getInstance().createEngine(authenticationContext)) {
-                currentBuilder.set(graphBuilder);
-                JsGraalGraphBuilder.contextForJs.set(authenticationContext);
-
-                // Log context info for debugging.
-                if (log.isDebugEnabled()) {
-                    log.debug("[evaluateRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
-                            ", contextId: " + authenticationContext.getContextIdentifier() +
-                            ", step: " + authenticationContext.getCurrentStep() +
-                            ", authContext hashCode: " + System.identityHashCode(authenticationContext));
-                }
-
-                // Get persisted bindings from authentication context (variables like
-                // rolesToStepUp).
-                Map<String, Object> persistedBindings = (Map<String, Object>) authenticationContext
-                        .getProperty("JS_BINDING_CURRENT_CONTEXT");
-                if (persistedBindings != null) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("[evaluateRemote] Found " + persistedBindings.size() +
-                                " persisted bindings: " + persistedBindings.keySet());
-                    }
-                    // Log each binding value for debugging.
-                    for (Map.Entry<String, Object> entry : persistedBindings.entrySet()) {
-                        if (log.isDebugEnabled()) {
-                            log.debug("[evaluateRemote] Binding: " + entry.getKey() + " = " +
-                                    (entry.getValue() != null
-                                            ? entry.getValue().getClass().getSimpleName() + ": " + entry.getValue()
-                                            : "null"));
-                        }
-                    }
-                } else {
-                    if (log.isDebugEnabled()) {
-                        log.debug("[evaluateRemote] No persisted bindings found in authContext. " +
-                                "Property keys: " + authenticationContext.getProperties().keySet());
-                    }
-                    persistedBindings = new HashMap<>();
-                }
-
-                // Register host functions that the External can call back.
-                Map<String, Object> hostFunctions = new HashMap<>();
-                hostFunctions.put(JS_FUNC_EXECUTE_STEP, new JsGraalStepExecuterInAsyncEvent());
-                hostFunctions.put(JS_FUNC_SEND_ERROR, new SendErrorAsyncFunctionImpl());
-                hostFunctions.put(JS_AUTH_FAILURE, new FailAuthenticationFunctionImpl());
-                hostFunctions.put(JS_FUNC_SHOW_PROMPT, new JsGraalPromptExecutorImpl());
-                hostFunctions.put(JS_FUNC_LOAD_FUNC_LIB, new JsGraalLoadExecutorImpl());
-                hostFunctions.put(JS_FUNC_GET_SECRET_BY_NAME, new JsGraalGetSecretImpl());
-
-                JsFunctionRegistry jsFunctionRegistrar = FrameworkServiceDataHolder.getInstance()
-                        .getJsFunctionRegistry();
-                if (jsFunctionRegistrar != null) {
-                    Map<String, Object> functionMap = jsFunctionRegistrar
-                            .getSubsystemFunctionsMap(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER);
-                    hostFunctions.putAll(functionMap);
-                }
-                jsEngine.registerHostFunctions(hostFunctions);
-
-                String identifier = UUID.randomUUID().toString();
-                Optional<JSExecutionMonitorData> optionalScriptExecutionData = Optional
-                        .ofNullable(retrieveAuthScriptExecutionMonitorData(authenticationContext));
-                try {
-                    startScriptExecutionMonitor(identifier, authenticationContext,
-                            optionalScriptExecutionData.orElse(null));
-
-                    // Reset dynamicallyBuiltBaseNode before callback execution.
-                    // Each callback cycle starts with a clean slate, matching local mode
-                    // where dynamicallyBuiltBaseNode starts null at callback entry.
-                    // Thread A runs callbacks inline now, so we clear the ThreadLocal directly.
-                    dynamicallyBuiltBaseNode.remove();
-
-                    // Execute the callback function in the External with persisted bindings
-                    EvaluationResult evalResult = jsEngine.executeCallback(
-                            jsFunction.getSource(),
-                            params,
-                            persistedBindings, // Pass persisted bindings for variables like rolesToStepUp
-                            authenticationContext);
-
-                    if (evalResult.isSuccess()) {
-                        result = evalResult.getResult();
-
-                        // Re-persist updated bindings so next callback sees changes
-                        // (e.g., dynamicFlag set in step 1 callback is available in step 2)
-                        Map<String, Object> updatedBindings = jsEngine.getBindings();
-                        authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", updatedBindings);
-                        if (log.isDebugEnabled()) {
-                            log.debug("[evaluateRemote] Re-persisted " + updatedBindings.size() +
-                                    " bindings after callback");
-                        }
-
-                        if (log.isDebugEnabled()) {
-                            log.debug("Remote JS execution succeeded for SP: " +
-                                    authenticationContext.getServiceProviderName() +
-                                    ", elapsed: " + evalResult.getElapsedMs() + "ms");
-                        }
-                    } else {
-                        log.error("Remote JS execution failed for SP: " +
-                                authenticationContext.getServiceProviderName() +
-                                ", error: " + evalResult.getErrorMessage());
-                        AuthGraphNode executingNode = (AuthGraphNode) authenticationContext
-                                .getProperty(PROP_CURRENT_NODE);
-                        FailNode failNode = new FailNode();
-                        failNode.setShowErrorPage(true);
-                        failNode.getFailureData().put("errorCode", "18013");
-                        failNode.getFailureData().put("errorMessage",
-                                "Script execution failed: " + evalResult.getErrorMessage());
-                        failNode.getFailureData().put("errorType",
-                                evalResult.getErrorType() != null ? evalResult.getErrorType() : "ScriptError");
-                        attachToLeaf(executingNode, failNode);
-                    }
-                } finally {
-                    optionalScriptExecutionData = Optional.ofNullable(endScriptExecutionMonitor(identifier));
-                }
-                optionalScriptExecutionData.ifPresent(
-                        scriptExecutionData ->
-                                storeAuthScriptExecutionMonitorData(authenticationContext,
-                                scriptExecutionData));
-
-                // dynamicallyBuiltBaseNode is already on Thread A — callbacks ran inline
-                // via the message loop, so no cross-thread propagation is needed.
-                // canInfuse/infuse read the ThreadLocal directly.
-                AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
-                if (canInfuse(executingNode)) {
-                    infuse(executingNode, dynamicallyBuiltBaseNode.get());
-                }
-
-            } catch (Throwable e) {
-                log.error("Error in remote JavaScript execution for service provider : " +
-                        authenticationContext.getServiceProviderName() + ", Javascript Fragment : \n" +
-                        jsFunction.getSource(), e);
-                AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);
-                FailNode failNode = new FailNode();
-                failNode.setShowErrorPage(true);
-                failNode.getFailureData().put("errorCode", "18013");
-                String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getName();
-                failNode.getFailureData().put("errorMessage", "Script execution error: " + errorMessage);
-                failNode.getFailureData().put("errorType", e.getClass().getSimpleName());
-                attachToLeaf(executingNode, failNode);
-            } finally {
-                contextForJs.remove();
-                dynamicallyBuiltBaseNode.remove();
-                clearCurrentBuilder();
-            }
-            return result;
-        }
     }
 
     private Context getContext() {
@@ -1062,7 +747,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         }
     }
 
-    private boolean canInfuse(AuthGraphNode executingNode) {
+    protected boolean canInfuse(AuthGraphNode executingNode) {
 
         return executingNode instanceof DynamicDecisionNode && dynamicallyBuiltBaseNode.get() != null;
     }
@@ -1110,13 +795,13 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         return FrameworkServiceDataHolder.getInstance().getJsExecutionSupervisor();
     }
 
-    private void storeAuthScriptExecutionMonitorData(AuthenticationContext context,
+    protected void storeAuthScriptExecutionMonitorData(AuthenticationContext context,
             JSExecutionMonitorData jsExecutionMonitorData) {
 
         context.setProperty(PROP_EXECUTION_SUPERVISOR_RESULT, jsExecutionMonitorData);
     }
 
-    private JSExecutionMonitorData retrieveAuthScriptExecutionMonitorData(AuthenticationContext context) {
+    protected JSExecutionMonitorData retrieveAuthScriptExecutionMonitorData(AuthenticationContext context) {
 
         JSExecutionMonitorData jsExecutionMonitorData;
         Object storedResult = context.getProperty(PROP_EXECUTION_SUPERVISOR_RESULT);
@@ -1128,7 +813,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         return jsExecutionMonitorData;
     }
 
-    private void startScriptExecutionMonitor(String identifier, AuthenticationContext context,
+    protected void startScriptExecutionMonitor(String identifier, AuthenticationContext context,
                                              JSExecutionMonitorData previousExecutionResult) {
 
         JSExecutionSupervisor jsExecutionSupervisor = getJSExecutionSupervisor();
@@ -1139,12 +824,12 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 previousExecutionResult.getElapsedTime(), previousExecutionResult.getConsumedMemory());
     }
 
-    private void startScriptExecutionMonitor(String identifier, AuthenticationContext context) {
+    protected void startScriptExecutionMonitor(String identifier, AuthenticationContext context) {
 
         startScriptExecutionMonitor(identifier, context, new JSExecutionMonitorData(0L, 0L));
     }
 
-    private JSExecutionMonitorData endScriptExecutionMonitor(String identifier) {
+    protected JSExecutionMonitorData endScriptExecutionMonitor(String identifier) {
 
         JSExecutionSupervisor executionSupervisor = getJSExecutionSupervisor();
         if (executionSupervisor == null) {

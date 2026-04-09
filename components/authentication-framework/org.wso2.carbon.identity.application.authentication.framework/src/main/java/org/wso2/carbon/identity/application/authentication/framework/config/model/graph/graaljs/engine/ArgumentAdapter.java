@@ -22,6 +22,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.StepConfig;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsWrapperFactoryProvider;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedIdPData;
@@ -213,8 +214,9 @@ class ArgumentAdapter {
         }
 
         // Handle JsAuthenticationContext - reconstruct from stored authContext.
-        if (paramType.getSimpleName().contains("JsAuthenticationContext") ||
-                paramType.getSimpleName().contains("JsGraalAuthenticationContext")) {
+        // JsAuthenticationContext is the abstract base; JsGraalAuthenticationContext extends it.
+        // All host function methods declare the parameter as the base type.
+        if (JsAuthenticationContext.class.isAssignableFrom(paramType)) {
             if (log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Reconstructed JsGraalAuthenticationContext from stored authContext");
             }
@@ -364,7 +366,7 @@ class ArgumentAdapter {
         // returning null
         // when the IdP data lookup doesn't match, causing createJsAuthenticatedUser to
         // throw.
-        if ("authenticateduser".equals(proxyType) && basePath.matches("steps::\\d+::subject")) {
+        if ("authenticateduser".equals(proxyType) && isStepSubjectPath(basePath)) {
             String[] parts = basePath.split(RemoteEngineConstants.PATH_SEPARATOR);
             int stepNum = Integer.parseInt(parts[1]);
             if (log.isDebugEnabled()) {
@@ -405,58 +407,39 @@ class ArgumentAdapter {
             }
         }
 
-        // Generic proxy navigation fallback for other proxy types/paths
+        // Generic proxy navigation fallback for other proxy types/paths.
+        // Delegates to PropertyPathNavigator which handles ProxyObject, ProxyArray,
+        // Map, and reflection getter traversal (including the OSGi classloader fallback).
         if (log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Navigating to nested property: " + basePath);
         }
 
         try {
             String[] pathParts = basePath.split(RemoteEngineConstants.PATH_SEPARATOR);
-            Object current = new JsGraalAuthenticationContext(authContext);
-
-            for (String part : pathParts) {
-                if (current == null) {
-                    log.warn("[RemoteJsEngine] Null encountered while navigating path at: " + part);
-                    return null;
-                }
-
-                if (part.matches("\\d+")) {
-                    // Numeric segment: try ProxyArray.get first, then reflection fallback
-                    if (current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
-                        current = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(Integer.parseInt(part));
-                    } else {
-                        // Reflection fallback for classloader issues where instanceof doesn't match
-                        try {
-                            java.lang.reflect.Method getMethod = current.getClass().getMethod("get", long.class);
-                            current = getMethod.invoke(current, (long) Integer.parseInt(part));
-                        } catch (NoSuchMethodException nsme) {
-                            if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-                                current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
-                            } else {
-                                log.warn("[RemoteJsEngine] Cannot navigate numeric segment '" + part +
-                                        "' on type: " + current.getClass().getName());
-                                return null;
-                            }
-                        }
-                    }
-                } else if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-                    current = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
-                } else {
-                    log.warn("[RemoteJsEngine] Cannot navigate to '" + part + "' on type: " +
-                            current.getClass().getName());
-                    return null;
-                }
-            }
+            Object root = new JsGraalAuthenticationContext(authContext);
+            Object result = PropertyPathNavigator.navigatePath(pathParts, 0, root);
 
             if (log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Successfully navigated to: " + basePath +
-                        ", result type: " + (current != null ? current.getClass().getSimpleName() : "null"));
+                        ", result type: " + (result != null ? result.getClass().getSimpleName() : "null"));
             }
-            return current;
+            return result;
 
         } catch (Exception e) {
             log.error("[RemoteJsEngine] Error navigating to property '" + basePath + "': " + e.getMessage(), e);
             return null;
         }
+    }
+
+    /**
+     * Check if basePath matches the pattern "steps::{digit}::subject".
+     * Replaces basePath.matches("steps::\\d+::subject") to avoid regex compilation per call.
+     */
+    private static boolean isStepSubjectPath(String basePath) {
+        String[] parts = basePath.split(RemoteEngineConstants.PATH_SEPARATOR);
+        return parts.length == 3 &&
+                "steps".equals(parts[0]) &&
+                PropertyPathNavigator.isNumeric(parts[1]) &&
+                "subject".equals(parts[2]);
     }
 }

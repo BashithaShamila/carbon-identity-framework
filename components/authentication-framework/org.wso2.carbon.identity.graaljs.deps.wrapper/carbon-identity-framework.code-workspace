@@ -7,7 +7,7 @@
             "path": "../../../../external-graaljs"
         },
         {
-            "path": "../../../../asgardeo-extensions"
+            "path": "../../../../identity-conditional-auth-functions"
         }
     ]
 }

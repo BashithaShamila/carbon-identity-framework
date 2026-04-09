@@ -288,39 +288,15 @@ public class Serializer {
                     .build();
         }
 
-        // Fallback: If no cache is set (old behavior), use bean introspection
-        // This path should rarely be taken in remote execution mode
-        try {
-            Map<String, Object> beanMap = new HashMap<>();
-            for (java.lang.reflect.Method m : serializable.getClass().getMethods()) {
-                if (m.getParameterCount() == 0 && m.getName().startsWith("get") &&
-                        !"getClass".equals(m.getName())) {
-                    String prop = Character.toLowerCase(m.getName().charAt(3)) +
-                            m.getName().substring(4);
-                    try {
-                        Object propVal = m.invoke(serializable);
-                        beanMap.put(prop, propVal);
-                    } catch (Exception e) {
-                        // ignore inaccessible property
-                    }
-                }
-            }
-            if (!beanMap.isEmpty()) {
-                log.warn("FALLBACK: Serialized POJO via eager bean introspection (no proxy cache available): " +
-                        serializable.getClass().getName() + " -> " + beanMap.size() + " properties");
-                return toProto(beanMap);
-            }
-        } catch (Exception e) {
-            log.debug("POJO introspection failed for " +
-                    serializable.getClass().getName() + ": " + e.getMessage());
-        }
-
-        // Fallback: convert to string
-        log.warn("Falling back to toString() serialization for type: " +
-                serializable.getClass().getName() + " = " + serializable);
-        return SerializedValue.newBuilder()
-                .setStringValue(serializable.toString())
-                .build();
+        // Every serializable type must be handled explicitly above.
+        // If we reach here, it means a new type was introduced without adding
+        // a corresponding handler — fail fast so it gets fixed immediately
+        // rather than silently corrupting data on the wire.
+        throw new IllegalArgumentException(
+                "Unhandled type in Serializer.toProto(): " + serializable.getClass().getName() +
+                ". Add an explicit serialization handler for this type. " +
+                "Proxy cache was: " + (cache != null ? "available" : "NULL") +
+                ", shouldProxy=" + shouldProxy);
     }
 
     /**
@@ -380,7 +356,8 @@ public class Serializer {
                 return proxyMap;
 
             default:
-                log.warn("Unknown SerializedValue case: " + sv.getValueCase());
+                log.error("Unknown SerializedValue case: " + sv.getValueCase() +
+                        ". This may indicate a version mismatch between IS and sidecar.");
                 return null;
         }
     }

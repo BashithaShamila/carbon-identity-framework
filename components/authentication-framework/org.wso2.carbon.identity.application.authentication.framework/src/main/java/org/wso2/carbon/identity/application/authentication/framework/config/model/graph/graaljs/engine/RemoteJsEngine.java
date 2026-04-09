@@ -77,8 +77,9 @@ public class RemoteJsEngine implements JsEngine {
     // Collaborators — each handles a single responsibility
     private final ArgumentAdapter argumentAdapter;
     private final ProxyReferenceCache proxyReferenceCache;
+    private final HostFunctionRegistry hostFunctionRegistry;
 
-    private boolean closed = false;
+    private volatile boolean closed = false;
 
     /**
      * Create a new remote JavaScript engine.
@@ -92,6 +93,7 @@ public class RemoteJsEngine implements JsEngine {
         this.sessionId = UUID.randomUUID().toString();
         this.argumentAdapter = new ArgumentAdapter(authContext);
         this.proxyReferenceCache = new ProxyReferenceCache();
+        this.hostFunctionRegistry = new HostFunctionRegistry();
         if (log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Created with session: " + sessionId +
                     ", transport: " + transport.getClass().getSimpleName() +
@@ -463,6 +465,7 @@ public class RemoteJsEngine implements JsEngine {
     public void registerHostFunctions(Map<String, Object> functions) {
         if (functions != null) {
             hostFunctions.putAll(functions);
+            hostFunctionRegistry.register(functions);
         }
     }
 
@@ -490,6 +493,7 @@ public class RemoteJsEngine implements JsEngine {
     /**
      * Handle host function callback from External.
      * This is called when the External JavaScript invokes a host function.
+     * Dispatches via pre-computed HostFunctionRegistry for O(1) lookup.
      */
     public Object invokeHostFunction(String functionName, Object... args) throws Exception {
         if (log.isDebugEnabled()) {
@@ -508,87 +512,11 @@ public class RemoteJsEngine implements JsEngine {
             }
         }
 
-        Object hostFunc = hostFunctions.get(functionName);
-        if (hostFunc == null) {
-            log.error("[RemoteJsEngine] Unknown host function: " + functionName +
-                    ", available: " + hostFunctions.keySet());
-            throw new IllegalArgumentException("Unknown host function: " + functionName);
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("[RemoteJsEngine] Found host function impl: " + hostFunc.getClass().getName());
-        }
-
         // No thread-local setup/teardown needed — invokeHostFunction now runs on Thread A
         // (the IS HTTP thread) which already has contextForJs, currentBuilder,
         // dynamicallyBuiltBaseNode, and CarbonContext set by the caller.
 
-        // Find the @HostAccess.Export method to invoke.
-        for (java.lang.reflect.Method method : hostFunc.getClass().getMethods()) {
-            if (method.isAnnotationPresent(org.graalvm.polyglot.HostAccess.Export.class)) {
-                if (log.isDebugEnabled()) {
-                    log.debug("[RemoteJsEngine] Found @HostAccess.Export method: " + method.getName() +
-                            ", params: " + method.getParameterCount() +
-                            ", paramTypes: " + java.util.Arrays.toString(method.getParameterTypes()));
-                }
-
-                // Adapt arguments to match method parameter types.
-                Object[] adaptedArgs = argumentAdapter.adaptArgumentsForMethod(method, args);
-
-                // Log adapted arguments.
-                for (int i = 0; i < adaptedArgs.length; i++) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("[RemoteJsEngine] Adapted arg[" + i + "]: type=" +
-                                (adaptedArgs[i] != null ? adaptedArgs[i].getClass().getName() : "null"));
-                    }
-                }
-
-                if (log.isDebugEnabled()) {
-                    log.debug("[RemoteJsEngine] Invoking method with " + adaptedArgs.length + " adapted args");
-                }
-                try {
-                    Object result = method.invoke(hostFunc, adaptedArgs);
-                    if (log.isDebugEnabled()) {
-                        log.debug("[RemoteJsEngine] Method returned: " +
-                                (result != null ? result.getClass().getName() + "=" + result : "null"));
-                    }
-                    return result;
-                } catch (java.lang.reflect.InvocationTargetException e) {
-                    // Log the actual cause of the error.
-                    Throwable cause = e.getCause();
-                    log.error("[RemoteJsEngine] Host function '" + functionName + "' threw exception: " +
-                            (cause != null ? cause.getClass().getName() + ": " + cause.getMessage()
-                                    : e.getMessage()));
-                    if (cause != null) {
-                        log.error("[RemoteJsEngine] Root cause stack trace:", cause);
-                    }
-                    throw e;
-                }
-            }
-        }
-
-        // Fallback: try to find a method matching common patterns.
-        if (log.isDebugEnabled()) {
-            log.debug("[RemoteJsEngine] No @HostAccess.Export found, trying interface methods...");
-        }
-        Class<?>[] hostInterfaces = hostFunc.getClass().getInterfaces();
-        for (Class<?> iface : hostInterfaces) {
-            for (java.lang.reflect.Method method : iface.getMethods()) {
-                if (!method.isDefault() && method.getParameterCount() <= args.length) {
-                    try {
-                        Object[] adaptedArgs = argumentAdapter.adaptArgumentsForMethod(method, args);
-                        if (log.isDebugEnabled()) {
-                            log.debug("[RemoteJsEngine] Trying method: " + iface.getName() + "." + method.getName());
-                        }
-                        return method.invoke(hostFunc, adaptedArgs);
-                    } catch (IllegalArgumentException e) {
-                        log.debug("[RemoteJsEngine] Method mismatch: " + method.getName());
-                        // Try next method.
-                    }
-                }
-            }
-        }
-
-        throw new NoSuchMethodException("Could not find invokable method for: " + functionName);
+        return hostFunctionRegistry.invoke(functionName, argumentAdapter, args);
     }
 
     public String storeObjectReference(Object obj) {

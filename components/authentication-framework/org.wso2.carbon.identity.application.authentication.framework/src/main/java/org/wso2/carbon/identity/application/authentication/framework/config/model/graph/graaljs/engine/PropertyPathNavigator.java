@@ -58,6 +58,25 @@ public final class PropertyPathNavigator {
     }
 
     /**
+     * Check if a string consists of only ASCII digit characters.
+     * Avoids compiling a new regex on every call (unlike String.matches("\\d+")).
+     *
+     * @param s The string to check
+     * @return true if non-empty and all characters are digits
+     */
+    static boolean isNumeric(String s) {
+        if (s == null || s.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < s.length(); i++) {
+            if (!Character.isDigit(s.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Navigate a property path starting from a root object.
      *
      * @param pathParts  The path segments (already split by "::")
@@ -126,7 +145,7 @@ public final class PropertyPathNavigator {
      */
     private static Object navigateSingleStep(Object current, String part) {
         // Edge case #6: Numeric segments on ProxyArray use get(index), not getMember()
-        if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+        if (isNumeric(part) && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
             int index = Integer.parseInt(part);
             Object result = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(index);
             if (log.isDebugEnabled()) {
@@ -137,7 +156,7 @@ public final class PropertyPathNavigator {
         }
 
         // Numeric on ProxyObject - try getMember with string key
-        if (part.matches("\\d+") && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+        if (isNumeric(part) && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
             return ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
         }
 
@@ -168,7 +187,7 @@ public final class PropertyPathNavigator {
      * for ProxyArray where instanceof may not match across bundles.
      */
     private static Object navigateSingleStepForSet(Object current, String part) {
-        if (part.matches("\\d+")) {
+        if (isNumeric(part)) {
             int index = Integer.parseInt(part);
 
             // Try ProxyArray.get first
@@ -340,8 +359,13 @@ public final class PropertyPathNavigator {
             log.debug("[PropertyPathNavigator] No getter for property: " + property +
                     " on class: " + target.getClass().getName());
             return null;
-        } catch (IllegalAccessException | java.lang.reflect.InvocationTargetException e) {
-            log.debug("[PropertyPathNavigator] Getter invocation failed for property: " + property, e);
+        } catch (IllegalAccessException e) {
+            log.debug("[PropertyPathNavigator] Getter not accessible for property: " + property +
+                    " on class: " + target.getClass().getName());
+            return null;
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            log.error("[PropertyPathNavigator] Getter threw exception for property: " + property +
+                    " on class: " + target.getClass().getName(), e.getCause());
             return null;
         }
     }
