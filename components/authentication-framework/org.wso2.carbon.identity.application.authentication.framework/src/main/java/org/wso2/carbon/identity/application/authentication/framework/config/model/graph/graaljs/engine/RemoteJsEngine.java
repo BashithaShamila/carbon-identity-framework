@@ -20,8 +20,6 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.AuthGraphNode;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGraphBuilder;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextData;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.EvaluateRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.EvaluateResponse;
@@ -52,10 +50,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * Responsibilities are delegated to focused collaborators:
  * <ul>
- *   <li>{@link ThreadContextManager} — thread-local context setup/cleanup for gRPC callbacks</li>
  *   <li>{@link ArgumentAdapter} — External argument adaptation and type conversion</li>
  *   <li>{@link ProxyReferenceCache} — proxy object and host function return reference caching</li>
  * </ul>
+ * <p>
+ * Thread model: With the same-thread callback architecture, host function invocations
+ * (invokeHostFunction) run on the IS HTTP thread (Thread A) which already has the correct
+ * ThreadLocal context (contextForJs, dynamicallyBuiltBaseNode, currentBuilder, CarbonContext).
+ * No thread-local setup/teardown is needed.
  */
 public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHandler {
 
@@ -73,7 +75,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
     private final Map<String, Object> hostFunctions = new ConcurrentHashMap<>();
 
     // Collaborators — each handles a single responsibility
-    private final ThreadContextManager threadContextManager;
     private final ArgumentAdapter argumentAdapter;
     private final ProxyReferenceCache proxyReferenceCache;
 
@@ -89,7 +90,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
         this.transport = transport;
         this.authContext = authContext;
         this.sessionId = UUID.randomUUID().toString();
-        this.threadContextManager = new ThreadContextManager(authContext);
         this.argumentAdapter = new ArgumentAdapter(authContext);
         this.proxyReferenceCache = new ProxyReferenceCache();
         if (log.isDebugEnabled()) {
@@ -97,38 +97,6 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
                     ", transport: " + transport.getClass().getSimpleName() +
                     ", SP: " + (authContext != null ? authContext.getServiceProviderName() : "null"));
         }
-    }
-
-    /**
-     * Set the graph builder reference for this engine.
-     * This is needed so that gRPC callback threads can set the currentBuilder
-     * ThreadLocal,
-     * which is required by static methods like JsGraphBuilder.addLongWaitProcess().
-     *
-     * @param graphBuilder The JsGraphBuilder instance to use for callback thread
-     *                     context.
-     */
-    public void setGraphBuilder(JsGraphBuilder graphBuilder) {
-        threadContextManager.setGraphBuilder(graphBuilder);
-    }
-
-    /**
-     * Get the accumulated dynamicallyBuiltBaseNode value.
-     * This is the value accumulated across gRPC callbacks, replicating
-     * the local mode ThreadLocal behavior across threads.
-     *
-     * @return The accumulated AuthGraphNode, or null if none was built.
-     */
-    public AuthGraphNode getAccumulatedDynamicBaseNode() {
-        return threadContextManager.getAccumulatedDynamicBaseNode();
-    }
-
-    /**
-     * Reset the accumulated dynamicallyBuiltBaseNode.
-     * Should be called before a new callback evaluation cycle begins.
-     */
-    public void resetAccumulatedDynamicBaseNode() {
-        threadContextManager.resetAccumulatedDynamicBaseNode();
     }
 
     @Override
@@ -551,82 +519,77 @@ public class RemoteJsEngine implements JsEngine, CallbackServer.HostFunctionHand
             log.debug("[RemoteJsEngine] Found host function impl: " + hostFunc.getClass().getName());
         }
 
-        // Set up thread-local context for the host function invocation.
-        // This ensures proper tenant context is available.
-        threadContextManager.setup();
+        // No thread-local setup/teardown needed — invokeHostFunction now runs on Thread A
+        // (the IS HTTP thread) which already has contextForJs, currentBuilder,
+        // dynamicallyBuiltBaseNode, and CarbonContext set by the caller.
 
-        try {
-            // Find the @HostAccess.Export method to invoke.
-            for (java.lang.reflect.Method method : hostFunc.getClass().getMethods()) {
-                if (method.isAnnotationPresent(org.graalvm.polyglot.HostAccess.Export.class)) {
+        // Find the @HostAccess.Export method to invoke.
+        for (java.lang.reflect.Method method : hostFunc.getClass().getMethods()) {
+            if (method.isAnnotationPresent(org.graalvm.polyglot.HostAccess.Export.class)) {
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Found @HostAccess.Export method: " + method.getName() +
+                            ", params: " + method.getParameterCount() +
+                            ", paramTypes: " + java.util.Arrays.toString(method.getParameterTypes()));
+                }
+
+                // Adapt arguments to match method parameter types.
+                Object[] adaptedArgs = argumentAdapter.adaptArgumentsForMethod(method, args);
+
+                // Log adapted arguments.
+                for (int i = 0; i < adaptedArgs.length; i++) {
                     if (log.isDebugEnabled()) {
-                        log.debug("[RemoteJsEngine] Found @HostAccess.Export method: " + method.getName() +
-                                ", params: " + method.getParameterCount() +
-                                ", paramTypes: " + java.util.Arrays.toString(method.getParameterTypes()));
-                    }
-
-                    // Adapt arguments to match method parameter types.
-                    Object[] adaptedArgs = argumentAdapter.adaptArgumentsForMethod(method, args);
-
-                    // Log adapted arguments.
-                    for (int i = 0; i < adaptedArgs.length; i++) {
-                        if (log.isDebugEnabled()) {
-                            log.debug("[RemoteJsEngine] Adapted arg[" + i + "]: type=" +
-                                    (adaptedArgs[i] != null ? adaptedArgs[i].getClass().getName() : "null"));
-                        }
-                    }
-
-                    if (log.isDebugEnabled()) {
-                        log.debug("[RemoteJsEngine] Invoking method with " + adaptedArgs.length + " adapted args");
-                    }
-                    try {
-                        Object result = method.invoke(hostFunc, adaptedArgs);
-                        if (log.isDebugEnabled()) {
-                            log.debug("[RemoteJsEngine] Method returned: " +
-                                    (result != null ? result.getClass().getName() + "=" + result : "null"));
-                        }
-                        return result;
-                    } catch (java.lang.reflect.InvocationTargetException e) {
-                        // Log the actual cause of the error.
-                        Throwable cause = e.getCause();
-                        log.error("[RemoteJsEngine] Host function '" + functionName + "' threw exception: " +
-                                (cause != null ? cause.getClass().getName() + ": " + cause.getMessage()
-                                        : e.getMessage()));
-                        if (cause != null) {
-                            log.error("[RemoteJsEngine] Root cause stack trace:", cause);
-                        }
-                        throw e;
+                        log.debug("[RemoteJsEngine] Adapted arg[" + i + "]: type=" +
+                                (adaptedArgs[i] != null ? adaptedArgs[i].getClass().getName() : "null"));
                     }
                 }
-            }
 
-            // Fallback: try to find a method matching common patterns.
-            if (log.isDebugEnabled()) {
-                log.debug("[RemoteJsEngine] No @HostAccess.Export found, trying interface methods...");
-            }
-            Class<?>[] hostInterfaces = hostFunc.getClass().getInterfaces();
-            for (Class<?> iface : hostInterfaces) {
-                for (java.lang.reflect.Method method : iface.getMethods()) {
-                    if (!method.isDefault() && method.getParameterCount() <= args.length) {
-                        try {
-                            Object[] adaptedArgs = argumentAdapter.adaptArgumentsForMethod(method, args);
-                            if (log.isDebugEnabled()) {
-                                log.debug("[RemoteJsEngine] Trying method: " + iface.getName() + "." + method.getName());
-                            }
-                            return method.invoke(hostFunc, adaptedArgs);
-                        } catch (IllegalArgumentException e) {
-                            log.debug("[RemoteJsEngine] Method mismatch: " + method.getName());
-                            // Try next method.
-                        }
+                if (log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Invoking method with " + adaptedArgs.length + " adapted args");
+                }
+                try {
+                    Object result = method.invoke(hostFunc, adaptedArgs);
+                    if (log.isDebugEnabled()) {
+                        log.debug("[RemoteJsEngine] Method returned: " +
+                                (result != null ? result.getClass().getName() + "=" + result : "null"));
                     }
+                    return result;
+                } catch (java.lang.reflect.InvocationTargetException e) {
+                    // Log the actual cause of the error.
+                    Throwable cause = e.getCause();
+                    log.error("[RemoteJsEngine] Host function '" + functionName + "' threw exception: " +
+                            (cause != null ? cause.getClass().getName() + ": " + cause.getMessage()
+                                    : e.getMessage()));
+                    if (cause != null) {
+                        log.error("[RemoteJsEngine] Root cause stack trace:", cause);
+                    }
+                    throw e;
                 }
             }
-
-            throw new NoSuchMethodException("Could not find invokable method for: " + functionName);
-        } finally {
-            // Clean up thread context if needed.
-            threadContextManager.clear();
         }
+
+        // Fallback: try to find a method matching common patterns.
+        if (log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] No @HostAccess.Export found, trying interface methods...");
+        }
+        Class<?>[] hostInterfaces = hostFunc.getClass().getInterfaces();
+        for (Class<?> iface : hostInterfaces) {
+            for (java.lang.reflect.Method method : iface.getMethods()) {
+                if (!method.isDefault() && method.getParameterCount() <= args.length) {
+                    try {
+                        Object[] adaptedArgs = argumentAdapter.adaptArgumentsForMethod(method, args);
+                        if (log.isDebugEnabled()) {
+                            log.debug("[RemoteJsEngine] Trying method: " + iface.getName() + "." + method.getName());
+                        }
+                        return method.invoke(hostFunc, adaptedArgs);
+                    } catch (IllegalArgumentException e) {
+                        log.debug("[RemoteJsEngine] Method mismatch: " + method.getName());
+                        // Try next method.
+                    }
+                }
+            }
+        }
+
+        throw new NoSuchMethodException("Could not find invokable method for: " + functionName);
     }
 
     @Override

@@ -33,12 +33,9 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 
 import java.io.IOException;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -55,21 +52,28 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>
  * Thread model:
  * <ul>
- *   <li>IS HTTP thread calls sendEvaluate()/sendExecuteCallback() and blocks on CompletableFuture</li>
- *   <li>gRPC event thread receives StreamMessage via onNext() and dispatches to callback executor</li>
- *   <li>Callback executor invokes {@link ExternalCallbackHandler} methods</li>
- *   <li>All sends to a session's stream are synchronized via that session's lock</li>
+ *   <li>IS HTTP thread (Thread A) calls sendEvaluate()/sendExecuteCallback(), sends the initial
+ *       request, then enters a message loop polling a BlockingQueue</li>
+ *   <li>gRPC event thread receives StreamMessage via onNext() and enqueues to the BlockingQueue</li>
+ *   <li>Thread A polls the queue, dispatches callbacks to {@link ExternalCallbackHandler} inline
+ *       (same thread), and returns when a terminal response arrives</li>
+ *   <li>All stream writes happen on Thread A — no concurrent writer contention</li>
  * </ul>
  */
 public class GrpcStreamingTransportImpl implements RemoteEngineTransport, CallbackServer {
 
     private static final Log log = LogFactory.getLog(GrpcStreamingTransportImpl.class);
 
+    /**
+     * Sentinel message used to unblock the message loop when the stream terminates
+     * via onError() or onCompleted(). Identity-compared (==) in the message loop.
+     */
+    private static final StreamMessage STREAM_TERMINATED_SENTINEL = StreamMessage.getDefaultInstance();
+
     private final String grpcTarget;
     private final int requestTimeout;
     private final GrpcConnectionManager connectionManager;
     private final String correlationId;
-    private final ExecutorService callbackExecutor = Executors.newCachedThreadPool();
     private final ExternalCallbackHandler callbackHandler = new ExternalCallbackHandler();
 
     public GrpcStreamingTransportImpl(String grpcTarget) {
@@ -108,17 +112,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
         JsEngineStreamingServiceGrpc.JsEngineStreamingServiceStub stub = getStub();
 
-        CompletableFuture<EvaluateResponse> evalFuture = new CompletableFuture<>();
-        final Object lock = new Object();
-
-        // Outbound stream reference for closure capture — set immediately after stream creation.
-        // This replaces the old streamRegistry map that routed by sessionId.
-        AtomicReference<StreamObserver<StreamMessage>> outboundRef = new AtomicReference<>();
+        BlockingQueue<StreamMessage> messageQueue = new LinkedBlockingQueue<>();
+        AtomicReference<Throwable> streamError = new AtomicReference<>();
+        final Object streamLock = new Object();
 
         long t1 = System.currentTimeMillis();
         StreamObserver<StreamMessage> outboundStream = stub.executeScript(
-                createResponseObserver(sessionId, evalFuture, null, handler, outboundRef, lock, t0));
-        outboundRef.set(outboundStream);
+                createResponseObserver(sessionId, messageQueue, streamError, t0));
         long t2 = System.currentTimeMillis();
         System.out.println("[PERF] [" + t2 + "] IS STREAM_OPENED session=" + sessionId +
                 " startTs=" + t0 + " stubReadyTs=" + t1 + " streamOpenedTs=" + t2 +
@@ -130,7 +130,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                 .setEvaluateRequest(request)
                 .build();
 
-        synchronized (lock) {
+        synchronized (streamLock) {
             outboundStream.onNext(streamMsg);
         }
         long t3 = System.currentTimeMillis();
@@ -142,7 +142,11 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         }
 
         try {
-            EvaluateResponse response = evalFuture.get(requestTimeout, TimeUnit.SECONDS);
+            long deadline = t0 + requestTimeout * 1000L;
+            StreamMessage terminalMsg = processMessageLoop(
+                    messageQueue, streamError, sessionId, handler, outboundStream, streamLock, deadline);
+
+            EvaluateResponse response = terminalMsg.getEvaluateResponse();
             long t4 = System.currentTimeMillis();
             System.out.println("[PERF] [" + t4 + "] IS EVALUATE_RESPONSE session=" + sessionId +
                     " success=" + response.getSuccess() +
@@ -153,23 +157,20 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                         ", success: " + response.getSuccess());
             }
             return response;
-        } catch (TimeoutException e) {
+        } catch (IOException e) {
             long tErr = System.currentTimeMillis();
-            System.out.println("[PERF] [" + tErr + "] IS EVALUATE_TIMEOUT session=" +
-                    sessionId + " startTs=" + t0 + " sentTs=" + t3 +
-                    " timeoutTs=" + tErr + " timeoutMs=" + (tErr - t0));
-            throw new IOException("Evaluate request timed out after " + requestTimeout + "s", e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Evaluate request interrupted", e);
-        } catch (ExecutionException e) {
-            long tErr = System.currentTimeMillis();
-            System.out.println("[PERF] [" + tErr + "] IS EVALUATE_ERROR session=" +
-                    sessionId + " error=" + e.getCause().getMessage() +
-                    " startTs=" + t0 + " errorTs=" + tErr + " totalMs=" + (tErr - t0));
-            throw new IOException("Evaluate request failed: " + e.getCause().getMessage(), e.getCause());
+            if (e.getMessage() != null && e.getMessage().startsWith("Request timed out")) {
+                System.out.println("[PERF] [" + tErr + "] IS EVALUATE_TIMEOUT session=" +
+                        sessionId + " startTs=" + t0 + " sentTs=" + t3 +
+                        " timeoutTs=" + tErr + " timeoutMs=" + (tErr - t0));
+            } else {
+                System.out.println("[PERF] [" + tErr + "] IS EVALUATE_ERROR session=" +
+                        sessionId + " error=" + e.getMessage() +
+                        " startTs=" + t0 + " errorTs=" + tErr + " totalMs=" + (tErr - t0));
+            }
+            throw e;
         } finally {
-            synchronized (lock) {
+            synchronized (streamLock) {
                 try {
                     outboundStream.onCompleted();
                 } catch (Exception e) {
@@ -199,16 +200,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
 
         JsEngineStreamingServiceGrpc.JsEngineStreamingServiceStub stub = getStub();
 
-        CompletableFuture<ExecuteCallbackResponse> callbackFuture = new CompletableFuture<>();
-        final Object lock = new Object();
-
-        // Outbound stream reference for closure capture — set immediately after stream creation.
-        AtomicReference<StreamObserver<StreamMessage>> outboundRef = new AtomicReference<>();
+        BlockingQueue<StreamMessage> messageQueue = new LinkedBlockingQueue<>();
+        AtomicReference<Throwable> streamError = new AtomicReference<>();
+        final Object streamLock = new Object();
 
         long t1 = System.currentTimeMillis();
         StreamObserver<StreamMessage> outboundStream = stub.executeScript(
-                createResponseObserver(sessionId, null, callbackFuture, handler, outboundRef, lock, t0));
-        outboundRef.set(outboundStream);
+                createResponseObserver(sessionId, messageQueue, streamError, t0));
         long t2 = System.currentTimeMillis();
         System.out.println("[PERF] [" + t2 + "] IS EXEC_CALLBACK_STREAM_OPENED session=" + sessionId +
                 " startTs=" + t0 + " stubReadyTs=" + t1 + " streamOpenedTs=" + t2 +
@@ -220,7 +218,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                 .setExecuteCallbackRequest(request)
                 .build();
 
-        synchronized (lock) {
+        synchronized (streamLock) {
             outboundStream.onNext(streamMsg);
         }
         long t3 = System.currentTimeMillis();
@@ -232,7 +230,11 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         }
 
         try {
-            ExecuteCallbackResponse response = callbackFuture.get(requestTimeout, TimeUnit.SECONDS);
+            long deadline = t0 + requestTimeout * 1000L;
+            StreamMessage terminalMsg = processMessageLoop(
+                    messageQueue, streamError, sessionId, handler, outboundStream, streamLock, deadline);
+
+            ExecuteCallbackResponse response = terminalMsg.getExecuteCallbackResponse();
             long t4 = System.currentTimeMillis();
             System.out.println("[PERF] [" + t4 + "] IS EXEC_CALLBACK_RESPONSE session=" + sessionId +
                     " success=" + response.getSuccess() +
@@ -243,23 +245,20 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                         ", success: " + response.getSuccess());
             }
             return response;
-        } catch (TimeoutException e) {
+        } catch (IOException e) {
             long tErr = System.currentTimeMillis();
-            System.out.println("[PERF] [" + tErr + "] IS EXEC_CALLBACK_TIMEOUT session=" +
-                    sessionId + " startTs=" + t0 + " sentTs=" + t3 +
-                    " timeoutTs=" + tErr + " timeoutMs=" + (tErr - t0));
-            throw new IOException("ExecuteCallback request timed out after " + requestTimeout + "s", e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("ExecuteCallback request interrupted", e);
-        } catch (ExecutionException e) {
-            long tErr = System.currentTimeMillis();
-            System.out.println("[PERF] [" + tErr + "] IS EXEC_CALLBACK_ERROR session=" +
-                    sessionId + " error=" + e.getCause().getMessage() +
-                    " startTs=" + t0 + " errorTs=" + tErr + " totalMs=" + (tErr - t0));
-            throw new IOException("ExecuteCallback failed: " + e.getCause().getMessage(), e.getCause());
+            if (e.getMessage() != null && e.getMessage().startsWith("Request timed out")) {
+                System.out.println("[PERF] [" + tErr + "] IS EXEC_CALLBACK_TIMEOUT session=" +
+                        sessionId + " startTs=" + t0 + " sentTs=" + t3 +
+                        " timeoutTs=" + tErr + " timeoutMs=" + (tErr - t0));
+            } else {
+                System.out.println("[PERF] [" + tErr + "] IS EXEC_CALLBACK_ERROR session=" +
+                        sessionId + " error=" + e.getMessage() +
+                        " startTs=" + t0 + " errorTs=" + tErr + " totalMs=" + (tErr - t0));
+            }
+            throw e;
         } finally {
-            synchronized (lock) {
+            synchronized (streamLock) {
                 try {
                     outboundStream.onCompleted();
                 } catch (Exception e) {
@@ -296,24 +295,109 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
         // Per-session cleanup is handled by stream onCompleted() in finally.
     }
 
+    // ============ Message Loop ============
+
+    /**
+     * Polls the message queue, dispatches callback messages to {@link ExternalCallbackHandler} inline
+     * on the calling thread (Thread A), and returns when a terminal response
+     * (EvaluateResponse or ExecuteCallbackResponse) is received.
+     * <p>
+     * Timeout is deadline-based: the total time across ALL callbacks + sidecar execution
+     * must not exceed {@code deadline}. Each poll uses the remaining time until the deadline.
+     *
+     * @param messageQueue The queue populated by the gRPC response observer.
+     * @param streamError  Holds any error set by onError()/onCompleted().
+     * @param sessionId    Session identifier for logging.
+     * @param handler      The host function handler for this session.
+     * @param outbound     The outbound stream observer for sending callback responses.
+     * @param streamLock   Lock for synchronized stream writes.
+     * @param deadline     Absolute timestamp (epoch ms) by which a terminal response must arrive.
+     * @return The terminal StreamMessage containing EvaluateResponse or ExecuteCallbackResponse.
+     * @throws IOException On timeout, interruption, or stream error.
+     */
+    private StreamMessage processMessageLoop(
+            BlockingQueue<StreamMessage> messageQueue,
+            AtomicReference<Throwable> streamError,
+            String sessionId,
+            HostFunctionHandler handler,
+            StreamObserver<StreamMessage> outbound,
+            Object streamLock,
+            long deadline) throws IOException {
+
+        while (true) {
+            long remainingMs = deadline - System.currentTimeMillis();
+            if (remainingMs <= 0) {
+                throw new IOException("Request timed out after " + requestTimeout + "s");
+            }
+
+            StreamMessage msg;
+            try {
+                msg = messageQueue.poll(remainingMs, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Request interrupted", e);
+            }
+
+            if (msg == null) {
+                // poll() returned null — deadline elapsed
+                throw new IOException("Request timed out after " + requestTimeout + "s");
+            }
+
+            // Check for stream termination sentinel from onError()/onCompleted()
+            if (msg == STREAM_TERMINATED_SENTINEL) {
+                Throwable err = streamError.get();
+                throw new IOException(
+                        err != null ? "Stream error: " + err.getMessage() : "Stream terminated unexpectedly", err);
+            }
+
+            switch (msg.getPayloadCase()) {
+                case EVALUATE_RESPONSE:
+                case EXECUTE_CALLBACK_RESPONSE:
+                    // Terminal response — return to caller
+                    return msg;
+
+                case HOST_FUNCTION_REQUEST:
+                    callbackHandler.handleHostFunction(sessionId,
+                            msg.getHostFunctionRequest(), handler, outbound, streamLock);
+                    break;
+
+                case CONTEXT_PROPERTY_REQUEST:
+                    callbackHandler.handleContextProperty(sessionId,
+                            msg.getContextPropertyRequest(), handler, outbound, streamLock);
+                    break;
+
+                case CONTEXT_PROPERTY_SET_REQUEST:
+                    callbackHandler.handleContextPropertySet(sessionId,
+                            msg.getContextPropertySetRequest(), handler, outbound, streamLock);
+                    break;
+
+                default:
+                    log.warn("[GrpcStreaming] Unexpected message type in loop: " + msg.getPayloadCase());
+            }
+
+            // After processing a callback, check for stream error before next poll.
+            // The sidecar won't send more callbacks after a stream error, so this is
+            // a safe point to surface it.
+            Throwable err = streamError.get();
+            if (err != null) {
+                throw new IOException("Stream error during callback processing: " + err.getMessage(), err);
+            }
+        }
+    }
+
     // ============ Stream Observer Factory ============
 
     /**
-     * Creates a StreamObserver that handles incoming messages from the External.
-     * Routes terminal responses (evaluate/callback) to their CompletableFuture.
-     * Routes External callbacks (host function, context property) to {@link ExternalCallbackHandler}
-     * via the callback executor.
+     * Creates a StreamObserver that enqueues all incoming messages into the BlockingQueue.
+     * Thread A (the IS HTTP thread) polls this queue in {@link #processMessageLoop}.
      * <p>
-     * The handler and outbound stream reference are captured in the closure, eliminating the need
-     * for session-based lookup maps (sessionHandlers, streamRegistry) from the two-channel design.
+     * onError()/onCompleted() signal stream termination by setting the error reference
+     * and offering a sentinel message to unblock the queue poll.
      */
     private StreamObserver<StreamMessage> createResponseObserver(
             String sessionId,
-            CompletableFuture<EvaluateResponse> evalFuture,
-            CompletableFuture<ExecuteCallbackResponse> callbackFuture,
-            HostFunctionHandler handler,
-            AtomicReference<StreamObserver<StreamMessage>> outboundRef,
-            Object streamLock,
+            BlockingQueue<StreamMessage> messageQueue,
+            AtomicReference<Throwable> streamError,
             long streamStartTime) {
 
         return new StreamObserver<StreamMessage>() {
@@ -331,9 +415,6 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                                 sessionId + " streamStartTs=" + streamStartTime +
                                 " arrivedTs=" + now +
                                 " sinceStreamStartMs=" + (now - streamStartTime));
-                        if (evalFuture != null) {
-                            evalFuture.complete(message.getEvaluateResponse());
-                        }
                         break;
 
                     case EXECUTE_CALLBACK_RESPONSE:
@@ -341,9 +422,6 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                                 sessionId + " streamStartTs=" + streamStartTime +
                                 " arrivedTs=" + now +
                                 " sinceStreamStartMs=" + (now - streamStartTime));
-                        if (callbackFuture != null) {
-                            callbackFuture.complete(message.getExecuteCallbackResponse());
-                        }
                         break;
 
                     case HOST_FUNCTION_REQUEST:
@@ -352,10 +430,6 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                                 " streamStartTs=" + streamStartTime +
                                 " receivedTs=" + now +
                                 " sinceStreamStartMs=" + (now - streamStartTime));
-                        callbackExecutor.submit(() ->
-                                callbackHandler.handleHostFunction(sessionId,
-                                        message.getHostFunctionRequest(),
-                                        handler, outboundRef.get(), streamLock));
                         break;
 
                     case CONTEXT_PROPERTY_REQUEST:
@@ -364,10 +438,6 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                                 " streamStartTs=" + streamStartTime +
                                 " receivedTs=" + now +
                                 " sinceStreamStartMs=" + (now - streamStartTime));
-                        callbackExecutor.submit(() ->
-                                callbackHandler.handleContextProperty(sessionId,
-                                        message.getContextPropertyRequest(),
-                                        handler, outboundRef.get(), streamLock));
                         break;
 
                     case CONTEXT_PROPERTY_SET_REQUEST:
@@ -376,15 +446,14 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                                 " streamStartTs=" + streamStartTime +
                                 " receivedTs=" + now +
                                 " sinceStreamStartMs=" + (now - streamStartTime));
-                        callbackExecutor.submit(() ->
-                                callbackHandler.handleContextPropertySet(sessionId,
-                                        message.getContextPropertySetRequest(),
-                                        handler, outboundRef.get(), streamLock));
                         break;
 
                     default:
                         log.warn("[GrpcStreaming] Unexpected message type: " + message.getPayloadCase());
                 }
+
+                // All messages go into the queue — Thread A dispatches
+                messageQueue.offer(message);
             }
 
             @Override
@@ -395,13 +464,8 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                         " errorTs=" + errTs + " error=" + t.getMessage() +
                         " sinceStreamStartMs=" + (errTs - streamStartTime));
                 log.error("[GrpcStreaming] Stream error, session: " + sessionId, t);
-                IOException ex = new IOException("Stream error: " + t.getMessage(), t);
-                if (evalFuture != null && !evalFuture.isDone()) {
-                    evalFuture.completeExceptionally(ex);
-                }
-                if (callbackFuture != null && !callbackFuture.isDone()) {
-                    callbackFuture.completeExceptionally(ex);
-                }
+                streamError.set(t);
+                messageQueue.offer(STREAM_TERMINATED_SENTINEL);
             }
 
             @Override
@@ -414,14 +478,10 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport, Callba
                 if (log.isDebugEnabled()) {
                     log.debug("[GrpcStreaming] Stream completed, session: " + sessionId);
                 }
-                if (evalFuture != null && !evalFuture.isDone()) {
-                    evalFuture.completeExceptionally(
-                            new IOException("Stream completed without response"));
-                }
-                if (callbackFuture != null && !callbackFuture.isDone()) {
-                    callbackFuture.completeExceptionally(
-                            new IOException("Stream completed without response"));
-                }
+                // If the message loop hasn't received a terminal response yet,
+                // this signals an abnormal completion.
+                streamError.compareAndSet(null, new IOException("Stream completed without response"));
+                messageQueue.offer(STREAM_TERMINATED_SENTINEL);
             }
         };
     }
