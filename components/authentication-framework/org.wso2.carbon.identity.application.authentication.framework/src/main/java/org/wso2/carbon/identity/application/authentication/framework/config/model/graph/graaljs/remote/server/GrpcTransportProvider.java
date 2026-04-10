@@ -16,11 +16,11 @@
  * under the License.
  */
 
-package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server;
+package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineTransport;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineTransport;
 
 /**
  * Provider for gRPC streaming transport singleton.

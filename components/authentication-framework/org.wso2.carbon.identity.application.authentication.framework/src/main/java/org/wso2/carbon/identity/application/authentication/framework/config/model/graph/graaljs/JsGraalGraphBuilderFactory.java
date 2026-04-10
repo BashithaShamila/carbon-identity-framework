@@ -29,7 +29,8 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsBaseGraphBuilder;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericGraphBuilderFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericSerializer;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngineFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteJsGraalGraphBuilder;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.AbstractJSObjectWrapper;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticatedUser;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticationContext;
@@ -192,7 +193,7 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
         return JsGraalGraphBuilder.getCurrentBuilder();
     }
 
-    public JsGraalGraphBuilder createBuilder(AuthenticationContext authenticationContext,
+    public JsBaseGraphBuilder createBuilder(AuthenticationContext authenticationContext,
             Map<Integer, StepConfig> stepConfigMap) {
 
         if (needsLocalContext(authenticationContext)) {
@@ -201,7 +202,7 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
         return new RemoteJsGraalGraphBuilder(authenticationContext, stepConfigMap);
     }
 
-    public JsGraalGraphBuilder createBuilder(AuthenticationContext authenticationContext,
+    public JsBaseGraphBuilder createBuilder(AuthenticationContext authenticationContext,
             Map<Integer, StepConfig> stepConfigMap, AuthGraphNode currentNode) {
 
         if (needsLocalContext(authenticationContext)) {

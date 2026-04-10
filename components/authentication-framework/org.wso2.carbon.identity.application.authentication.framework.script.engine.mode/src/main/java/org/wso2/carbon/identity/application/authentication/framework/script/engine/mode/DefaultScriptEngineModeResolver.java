@@ -20,8 +20,8 @@ package org.wso2.carbon.identity.application.authentication.framework.script.eng
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.JsEngineFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ScriptEngineModeResolver;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.ScriptEngineModeResolver;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 
 /**

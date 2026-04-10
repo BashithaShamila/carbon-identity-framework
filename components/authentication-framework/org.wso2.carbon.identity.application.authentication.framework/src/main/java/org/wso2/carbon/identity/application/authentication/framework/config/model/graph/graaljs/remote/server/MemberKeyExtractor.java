@@ -16,10 +16,10 @@
  * under the License.
  */
 
-package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server;
+package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server;
 
 import org.graalvm.polyglot.proxy.ProxyArray;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertyResponse;
 
 /**
  * Utility for extracting member keys from various container types returned by

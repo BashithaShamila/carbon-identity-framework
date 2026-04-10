@@ -115,7 +115,7 @@
                             org.osgi.framework; version="[1.7.0,2.0.0)",
                             org.osgi.service.component; version="[1.2.0,2.0.0)",
                             org.osgi.service.component.annotations; version="[1.2.0,2.0.0)",
-                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine,
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote,
                             org.wso2.carbon.identity.application.authentication.framework.context,
                         </Import-Package>
                     </instructions>

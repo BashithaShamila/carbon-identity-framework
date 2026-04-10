@@ -354,7 +354,7 @@
                         <Bundle-Name>${project.artifactId}</Bundle-Name>
                         <Private-Package>
                             org.wso2.carbon.identity.application.authentication.framework.internal,
-                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server,
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server,
                             io.grpc.*,
                             com.google.protobuf.*,
                             com.google.common.util.concurrent.*,
@@ -413,12 +413,12 @@
                             org.newsclub.net.unix.*; version="[2.9.0,3.0.0)"; resolution:=optional,
                         </Import-Package>
                         <Export-Package>!org.wso2.carbon.identity.application.authentication.framework.internal,
-                            !org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server,
+                            !org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server,
                             org.wso2.carbon.identity.application.authentication.framework.*;
                             version="${carbon.identity.package.export.version}",
-                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto;
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto;
                             version="${carbon.identity.package.export.version}",
-                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.grpc;
+                            org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.grpc;
                             version="${carbon.identity.package.export.version}"
                         </Export-Package>
                         <DynamicImport-Package>*</DynamicImport-Package>

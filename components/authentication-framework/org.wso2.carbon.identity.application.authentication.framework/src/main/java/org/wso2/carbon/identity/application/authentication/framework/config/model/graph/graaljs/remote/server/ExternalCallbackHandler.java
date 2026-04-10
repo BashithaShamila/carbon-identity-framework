@@ -16,25 +16,25 @@
  * under the License.
  */
 
-package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server;
+package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server;
 
 import io.grpc.stub.StreamObserver;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.graalvm.polyglot.proxy.ProxyObject;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteJsEngine;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.Serializer;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.ProxyTypeResolver;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineConstants;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyRequest;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertyResponse;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertySetRequest;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.ContextPropertySetResponse;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionRequest;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.HostFunctionResponse;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedProxyObject;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.SerializedValue;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.proto.StreamMessage;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteJsEngine;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.Serializer;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.ProxyTypeResolver;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineConstants;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertyRequest;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertyResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertySetRequest;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertySetResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.HostFunctionRequest;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.HostFunctionResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.SerializedProxyObject;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.SerializedValue;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.StreamMessage;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -241,7 +241,7 @@ class ExternalCallbackHandler {
                     .setSessionId(sessionId)
                     .setContextPropertyResponse(ContextPropertyResponse.newBuilder()
                             .setSuccess(false)
-                            .setErrorMessage(e.getMessage())
+                            .setErrorMessage(e.getMessage() != null ? e.getMessage() : e.getClass().getName())
                             .build())
                     .build());
         }
@@ -299,7 +299,7 @@ class ExternalCallbackHandler {
                     .setSessionId(sessionId)
                     .setContextPropertySetResponse(ContextPropertySetResponse.newBuilder()
                             .setSuccess(false)
-                            .setErrorMessage(e.getMessage())
+                            .setErrorMessage(e.getMessage() != null ? e.getMessage() : e.getClass().getName())
                             .build())
                     .build());
         }

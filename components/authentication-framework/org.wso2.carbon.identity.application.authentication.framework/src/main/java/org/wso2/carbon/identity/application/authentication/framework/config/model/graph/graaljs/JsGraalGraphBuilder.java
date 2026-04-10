@@ -262,24 +262,11 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         }
         eventsMap.forEach((key, value) -> {
             if ((!(value instanceof GraalSerializableJsFunction))) {
-                if (value instanceof String) {
-                    // Remote mode: External serializes JS functions as source code strings.
-                    String source = (String) value;
-                    if (source.trim().startsWith("function") || source.contains("=>")) {
-                        GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
-                        decisionNode.addGenericFunction(key, jsFunction);
-                    } else {
-                        log.error("Event handler : " + key + " is a String but doesn't look like a function: "
-                                + source);
-                    }
+                GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
+                if (jsFunction != null) {
+                    decisionNode.addGenericFunction(key, jsFunction);
                 } else {
-                    // Local mode: value is a GraalJS Value object.
-                    GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
-                    if (jsFunction != null) {
-                        decisionNode.addGenericFunction(key, jsFunction);
-                    } else {
-                        log.error("Event handler : " + key + " is not a function : " + value);
-                    }
+                    log.error("Event handler : " + key + " is not a function : " + value);
                 }
             } else {
                 decisionNode.addGenericFunction(key, (GraalSerializableJsFunction) value);
@@ -294,24 +281,11 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         }
         handlersMap.forEach((key, value) -> {
             if (!(value instanceof GraalSerializableJsFunction)) {
-                if (value instanceof String) {
-                    // Remote mode: External serializes JS functions as source code strings.
-                    String source = (String) value;
-                    if (source.trim().startsWith("function") || source.contains("=>")) {
-                        GraalSerializableJsFunction jsFunction = new GraalSerializableJsFunction(source);
-                        showPromptNode.addGenericHandler(key, jsFunction);
-                    } else {
-                        log.error("Event handler : " + key + " is a String but doesn't look like a function: "
-                                + source);
-                    }
+                GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
+                if (jsFunction != null) {
+                    showPromptNode.addGenericHandler(key, jsFunction);
                 } else {
-                    // Local mode: value is a GraalJS Value object.
-                    GraalSerializableJsFunction jsFunction = GraalSerializableJsFunction.toSerializableForm(value);
-                    if (jsFunction != null) {
-                        showPromptNode.addGenericHandler(key, jsFunction);
-                    } else {
-                        log.error("Event handler : " + key + " is not a function : " + value);
-                    }
+                    log.error("Event handler : " + key + " is not a function : " + value);
                 }
             } else {
                 showPromptNode.addGenericHandler(key, (GraalSerializableJsFunction) value);
@@ -747,7 +721,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         }
     }
 
-    protected boolean canInfuse(AuthGraphNode executingNode) {
+    private boolean canInfuse(AuthGraphNode executingNode) {
 
         return executingNode instanceof DynamicDecisionNode && dynamicallyBuiltBaseNode.get() != null;
     }
@@ -795,13 +769,13 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         return FrameworkServiceDataHolder.getInstance().getJsExecutionSupervisor();
     }
 
-    protected void storeAuthScriptExecutionMonitorData(AuthenticationContext context,
+    private void storeAuthScriptExecutionMonitorData(AuthenticationContext context,
             JSExecutionMonitorData jsExecutionMonitorData) {
 
         context.setProperty(PROP_EXECUTION_SUPERVISOR_RESULT, jsExecutionMonitorData);
     }
 
-    protected JSExecutionMonitorData retrieveAuthScriptExecutionMonitorData(AuthenticationContext context) {
+    private JSExecutionMonitorData retrieveAuthScriptExecutionMonitorData(AuthenticationContext context) {
 
         JSExecutionMonitorData jsExecutionMonitorData;
         Object storedResult = context.getProperty(PROP_EXECUTION_SUPERVISOR_RESULT);
@@ -813,7 +787,7 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
         return jsExecutionMonitorData;
     }
 
-    protected void startScriptExecutionMonitor(String identifier, AuthenticationContext context,
+    private void startScriptExecutionMonitor(String identifier, AuthenticationContext context,
                                              JSExecutionMonitorData previousExecutionResult) {
 
         JSExecutionSupervisor jsExecutionSupervisor = getJSExecutionSupervisor();
@@ -824,12 +798,12 @@ public class JsGraalGraphBuilder extends JsGraphBuilder {
                 previousExecutionResult.getElapsedTime(), previousExecutionResult.getConsumedMemory());
     }
 
-    protected void startScriptExecutionMonitor(String identifier, AuthenticationContext context) {
+    private void startScriptExecutionMonitor(String identifier, AuthenticationContext context) {
 
         startScriptExecutionMonitor(identifier, context, new JSExecutionMonitorData(0L, 0L));
     }
 
-    protected JSExecutionMonitorData endScriptExecutionMonitor(String identifier) {
+    private JSExecutionMonitorData endScriptExecutionMonitor(String identifier) {
 
         JSExecutionSupervisor executionSupervisor = getJSExecutionSupervisor();
         if (executionSupervisor == null) {

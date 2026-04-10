@@ -16,7 +16,7 @@
  * under the License.
  */
 
-package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.server;
+package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server;
 
 import io.grpc.ChannelCredentials;
 import io.grpc.Grpc;
@@ -25,7 +25,7 @@ import io.grpc.ManagedChannelBuilder;
 import io.grpc.TlsChannelCredentials;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.engine.RemoteEngineConstants;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineConstants;
 
 import java.io.File;
 import java.io.IOException;
@@ -40,6 +40,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * - gRPC Server for receiving host function callbacks
  * <p>
  * Uses double-checked locking pattern for thread-safe lazy initialization.
+ * <p>
+ * Thread safety:
+ * - Pool creation/teardown is synchronized (rare operation, startup/target change only).
+ * - Round-robin channel selection uses AtomicInteger outside synchronized block
+ *   to avoid serializing concurrent gRPC requests through a single lock.
+ * - channelPool is volatile for safe publication to unsynchronized readers
+ *   (isClientChannelConnected).
  */
 public class GrpcConnectionManager {
 
@@ -49,8 +56,11 @@ public class GrpcConnectionManager {
     private static volatile GrpcConnectionManager instance;
     private static final Object lock = new Object();
 
-    // Client channel pool for requests to remote JS engine
-    private ManagedChannel[] channelPool;
+    // Client channel pool for requests to remote JS engine.
+    // Volatile for safe publication: isClientChannelConnected() reads this without
+    // synchronization. The volatile write in getClientChannel() (after pool creation)
+    // guarantees that concurrent readers see either null or a fully initialized array.
+    private volatile ManagedChannel[] channelPool;
     private final AtomicInteger channelIndex = new AtomicInteger(0);
     private int channelPoolSize = 4; // default pool size, configurable via graaljs.grpc.channel.pool.size
     private String grpcTarget;
@@ -82,47 +92,93 @@ public class GrpcConnectionManager {
 
     /**
      * Get or create the client channel for communicating with remote JS engine.
+     * <p>
+     * Pool creation is synchronized (rare: first call or target change).
+     * Channel selection is lock-free via AtomicInteger round-robin.
      *
      * @param target gRPC target (e.g., "localhost:50051")
      * @return ManagedChannel instance
      */
-    public synchronized ManagedChannel getClientChannel(String target) {
-        if (this.grpcTarget == null || !this.grpcTarget.equals(target)) {
-            // Target changed or first initialization
-            if (channelPool != null) {
-                log.info("[GrpcConnectionManager] Target changed, shutting down old channel pool");
-                shutdownClientChannel();
-            }
-            this.grpcTarget = target;
+    public ManagedChannel getClientChannel(String target) {
+        // Fast path: pool exists and target matches — lock-free round-robin selection.
+        // Read volatile channelPool once into local variable for consistent snapshot.
+        ManagedChannel[] pool = this.channelPool;
+        if (pool != null && target.equals(this.grpcTarget)) {
+            int index = (channelIndex.getAndIncrement() & 0x7FFFFFFF) % pool.length;
+            return pool[index];
         }
 
-        if (channelPool == null) {
-            log.info("[GrpcConnectionManager] Creating gRPC client channel pool of size " +
-                    channelPoolSize + " to: " + target +
-                    ", mTLS: " + RemoteEngineConstants.MTLS_ENABLED);
-            channelPool = new ManagedChannel[channelPoolSize];
+        // Slow path: pool not created or target changed — synchronized initialization.
+        return getOrCreateChannelPool(target);
+    }
+
+    /**
+     * Synchronized pool creation/recreation. Called only on first access or target change.
+     */
+    private synchronized ManagedChannel getOrCreateChannelPool(String target) {
+        // Double-check under lock: another thread may have created the pool while we waited.
+        if (this.channelPool != null && target.equals(this.grpcTarget)) {
+            ManagedChannel[] pool = this.channelPool;
+            int index = (channelIndex.getAndIncrement() & 0x7FFFFFFF) % pool.length;
+            return pool[index];
+        }
+
+        // Target changed or first initialization
+        if (this.channelPool != null) {
+            log.info("[GrpcConnectionManager] Target changed, shutting down old channel pool");
+            shutdownPoolInternal();
+        }
+        this.grpcTarget = target;
+
+        log.info("[GrpcConnectionManager] Creating gRPC client channel pool of size " +
+                channelPoolSize + " to: " + target +
+                ", mTLS: " + RemoteEngineConstants.MTLS_ENABLED);
+
+        // Build into a temporary array. If any channel creation fails, clean up all
+        // channels created so far and propagate the error. This prevents a partially
+        // initialized channelPool with null entries that would cause NPE on round-robin.
+        ManagedChannel[] tempPool = new ManagedChannel[channelPoolSize];
+        try {
             for (int i = 0; i < channelPoolSize; i++) {
-                channelPool[i] = createChannel(target);
+                tempPool[i] = createChannel(target);
             }
-            log.info("[GrpcConnectionManager] gRPC client channel pool created successfully (" +
-                    channelPoolSize + " channels)");
+        } catch (RuntimeException e) {
+            // Clean up any channels that were successfully created before the failure.
+            for (ManagedChannel ch : tempPool) {
+                if (ch != null) {
+                    ch.shutdownNow();
+                }
+            }
+            throw e;
         }
 
-        // Round-robin channel selection (mask sign bit to handle integer overflow)
-        int index = (channelIndex.getAndIncrement() & 0x7FFFFFFF) % channelPoolSize;
-        return channelPool[index];
+        // Volatile write: publishes the fully initialized array to concurrent readers.
+        this.channelPool = tempPool;
+        channelIndex.set(0);
+
+        log.info("[GrpcConnectionManager] gRPC client channel pool created successfully (" +
+                channelPoolSize + " channels)");
+
+        return tempPool[0];
     }
 
     /**
      * Check if client channel is connected and ready.
+     * <p>
+     * This method is intentionally NOT synchronized. It reads the volatile
+     * {@code channelPool} reference for a fast-path check. The worst case
+     * if it sees a stale null is one extra {@code connect()} call, which is
+     * idempotent.
      *
      * @return true if channel exists and not shutdown/terminated
      */
     public boolean isClientChannelConnected() {
-        if (channelPool == null) {
+        // Read volatile once into local for consistent snapshot.
+        ManagedChannel[] pool = this.channelPool;
+        if (pool == null) {
             return false;
         }
-        for (ManagedChannel ch : channelPool) {
+        for (ManagedChannel ch : pool) {
             if (ch != null && !ch.isShutdown() && !ch.isTerminated()) {
                 return true;
             }
@@ -134,22 +190,31 @@ public class GrpcConnectionManager {
      * Shutdown the client channel gracefully.
      */
     public synchronized void shutdownClientChannel() {
-        if (channelPool != null) {
+        shutdownPoolInternal();
+    }
+
+    /**
+     * Internal pool shutdown — must be called under synchronized.
+     */
+    private void shutdownPoolInternal() {
+        ManagedChannel[] pool = this.channelPool;
+        if (pool != null) {
             log.info("[GrpcConnectionManager] Shutting down gRPC client channel pool (" +
-                    channelPool.length + " channels)");
-            for (int i = 0; i < channelPool.length; i++) {
-                if (channelPool[i] != null) {
+                    pool.length + " channels)");
+            for (int i = 0; i < pool.length; i++) {
+                if (pool[i] != null) {
                     try {
-                        channelPool[i].shutdown().awaitTermination(5, TimeUnit.SECONDS);
+                        pool[i].shutdown().awaitTermination(5, TimeUnit.SECONDS);
                     } catch (InterruptedException e) {
                         log.warn("[GrpcConnectionManager] Interrupted while shutting down channel " +
                                 i, e);
-                        channelPool[i].shutdownNow();
+                        pool[i].shutdownNow();
                         Thread.currentThread().interrupt();
                     }
                 }
             }
-            channelPool = null;
+            // Volatile write: concurrent readers of channelPool will see null.
+            this.channelPool = null;
             channelIndex.set(0);
         }
     }
@@ -159,7 +224,7 @@ public class GrpcConnectionManager {
      */
     public synchronized void shutdown() {
         log.info("[GrpcConnectionManager] Shutting down all gRPC resources");
-        shutdownClientChannel();
+        shutdownPoolInternal();
     }
 
     /**
