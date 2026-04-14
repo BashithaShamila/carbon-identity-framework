@@ -733,6 +733,11 @@ public abstract class FrameworkConstants {
         // Defaults
         public static final String DEFAULT_ENGINE_MODE = "REMOTE";
         public static final String DEFAULT_GRPC_TARGET = "localhost:50051";
+
+        // Remote engine tracing toggle (guards debug/perf logs in remote package)
+        public static final String GRAALJS_REMOTE_ENGINE_TRACING
+                = "AdaptiveAuth.GraalJS.RemoteEngineTracing";
+        public static final boolean DEFAULT_REMOTE_ENGINE_TRACING = false;
     }
 
     /**

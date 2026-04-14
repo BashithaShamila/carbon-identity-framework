@@ -111,8 +111,10 @@ public final class ProxyTypeResolver {
                 className.contains(".model.") ||
                 className.contains(".domain.");
 
-        System.out.println("[ProxyTypeResolver] shouldUseProxyPattern: " + className +
-                " - matches class pattern = " + matchesClassName);
+        if (JsEngineFactory.isTracingEnabled()) {
+            System.out.println("[ProxyTypeResolver] shouldUseProxyPattern: " + className +
+                    " - matches class pattern = " + matchesClassName);
+        }
         return matchesClassName;
     }
 

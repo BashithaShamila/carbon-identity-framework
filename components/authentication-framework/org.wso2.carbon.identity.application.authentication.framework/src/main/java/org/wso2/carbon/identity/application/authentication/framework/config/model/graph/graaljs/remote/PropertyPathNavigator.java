@@ -148,7 +148,7 @@ public final class PropertyPathNavigator {
         if (isNumeric(part) && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
             int index = Integer.parseInt(part);
             Object result = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(index);
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[PropertyPathNavigator] Accessed array index " + index + " -> " +
                         (result != null ? result.getClass().getSimpleName() : "null"));
             }
@@ -163,7 +163,7 @@ public final class PropertyPathNavigator {
         // Standard member access on ProxyObject
         if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
             Object result = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[PropertyPathNavigator] Accessed member '" + part + "' on proxy -> " +
                         (result != null ? result.getClass().getSimpleName() : "null"));
             }
@@ -200,7 +200,7 @@ public final class PropertyPathNavigator {
             try {
                 java.lang.reflect.Method getMethod = current.getClass().getMethod("get", long.class);
                 Object result = getMethod.invoke(current, (long) index);
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[PropertyPathNavigator] Used reflection get(" + index +
                             ") on " + current.getClass().getSimpleName());
                 }
@@ -244,7 +244,7 @@ public final class PropertyPathNavigator {
             try {
                 Value wrappedValue = Value.asValue(value);
                 ((org.graalvm.polyglot.proxy.ProxyObject) parent).putMember(finalPart, wrappedValue);
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[PropertyPathNavigator] Set property via putMember: " + finalPart);
                 }
                 return true;
@@ -258,7 +258,7 @@ public final class PropertyPathNavigator {
                         "putMember", String.class, Value.class);
                 Value wrappedValue = Value.asValue(value);
                 putMethod.invoke(parent, finalPart, wrappedValue);
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[PropertyPathNavigator] Set property via reflection putMember: " + finalPart);
                 }
                 return true;
@@ -274,7 +274,7 @@ public final class PropertyPathNavigator {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) parent;
             map.put(finalPart, value);
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[PropertyPathNavigator] Set property in map: " + finalPart);
             }
             return true;
@@ -287,14 +287,16 @@ public final class PropertyPathNavigator {
             for (java.lang.reflect.Method method : methods) {
                 if (method.getName().equals(setterName) && method.getParameterCount() == 1) {
                     method.invoke(parent, value);
-                    if (log.isDebugEnabled()) {
+                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[PropertyPathNavigator] Set property via setter: " + finalPart);
                     }
                     return true;
                 }
             }
         } catch (Exception e) {
-            log.debug("[PropertyPathNavigator] Setter failed for: " + finalPart, e);
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                log.debug("[PropertyPathNavigator] Setter failed for: " + finalPart, e);
+            }
         }
 
         log.warn("[PropertyPathNavigator] Could not set property: " + finalPart);
@@ -308,7 +310,7 @@ public final class PropertyPathNavigator {
     public static Object getMemberKeys(Object current) {
         if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
             Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMemberKeys();
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[PropertyPathNavigator] __keys__ on proxy -> " +
                         (keys != null ? keys.getClass().getSimpleName() : "null"));
             }
@@ -331,7 +333,9 @@ public final class PropertyPathNavigator {
                     return keys;
                 }
             } catch (Exception e) {
-                log.debug("[PropertyPathNavigator] Error getting keys for object: " + e.getMessage());
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    log.debug("[PropertyPathNavigator] Error getting keys for object: " + e.getMessage());
+                }
             }
         }
 
@@ -350,18 +354,22 @@ public final class PropertyPathNavigator {
             String getterName = "get" + Character.toUpperCase(property.charAt(0)) + property.substring(1);
             java.lang.reflect.Method getter = target.getClass().getMethod(getterName);
             Object result = getter.invoke(target);
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[PropertyPathNavigator] Accessed property '" + property + "' via " + getterName +
                         " -> " + (result != null ? result.getClass().getSimpleName() : "null"));
             }
             return result;
         } catch (NoSuchMethodException e) {
-            log.debug("[PropertyPathNavigator] No getter for property: " + property +
-                    " on class: " + target.getClass().getName());
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                log.debug("[PropertyPathNavigator] No getter for property: " + property +
+                        " on class: " + target.getClass().getName());
+            }
             return null;
         } catch (IllegalAccessException e) {
-            log.debug("[PropertyPathNavigator] Getter not accessible for property: " + property +
-                    " on class: " + target.getClass().getName());
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                log.debug("[PropertyPathNavigator] Getter not accessible for property: " + property +
+                        " on class: " + target.getClass().getName());
+            }
             return null;
         } catch (java.lang.reflect.InvocationTargetException e) {
             log.error("[PropertyPathNavigator] Getter threw exception for property: " + property +

@@ -4326,6 +4326,10 @@
             {% if authentication.adaptive.graaljs.grpc_target is defined %}
             <GrpcTarget>{{authentication.adaptive.graaljs.grpc_target}}</GrpcTarget>
             {% endif %}
+            <!--Remote engine tracing toggle (guards debug/perf logs in remote package)-->
+            {% if authentication.adaptive.graaljs.remote_engine_tracing is defined %}
+            <RemoteEngineTracing>{{authentication.adaptive.graaljs.remote_engine_tracing}}</RemoteEngineTracing>
+            {% endif %}
         </GraalJS>
 
         <AllowUpdatingAuthenticatedSubject>{{authentication.adaptive.allow_updating_authenticated_subject}}</AllowUpdatingAuthenticatedSubject>

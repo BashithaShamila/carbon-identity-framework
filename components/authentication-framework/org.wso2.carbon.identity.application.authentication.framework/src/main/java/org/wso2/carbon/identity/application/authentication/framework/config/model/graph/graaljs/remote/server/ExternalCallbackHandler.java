@@ -23,6 +23,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.graalvm.polyglot.proxy.ProxyObject;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteJsEngine;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.Serializer;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.ProxyTypeResolver;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineConstants;
@@ -73,9 +74,11 @@ class ExternalCallbackHandler {
 
         String functionName = request.getFunctionName();
         long hfStart = System.currentTimeMillis();
-        System.out.println("[PERF] [" + hfStart + "] IS HOST_FN_HANDLE_START session=" + sessionId +
-                " fn=" + functionName + " handleStartTs=" + hfStart);
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled()) {
+            System.out.println("[PERF] [" + hfStart + "] IS HOST_FN_HANDLE_START session=" + sessionId +
+                    " fn=" + functionName + " handleStartTs=" + hfStart);
+        }
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] handleHostFunction: " + functionName + ", session: " + sessionId);
         }
 
@@ -90,14 +93,16 @@ class ExternalCallbackHandler {
             long hfExecStart = System.currentTimeMillis();
             Object result = handler.invokeHostFunction(functionName, args.toArray());
             long hfExecEnd = System.currentTimeMillis();
-            System.out.println("[PERF] [" + hfExecEnd + "] IS HOST_FN_EXECUTED session=" + sessionId +
-                    " fn=" + functionName +
-                    " handleStartTs=" + hfStart + " deserEndTs=" + hfExecStart +
-                    " execStartTs=" + hfExecStart + " execEndTs=" + hfExecEnd +
-                    " deserMs=" + (hfExecStart - hfStart) +
-                    " execMs=" + (hfExecEnd - hfExecStart) +
-                    " totalMs=" + (hfExecEnd - hfStart));
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled()) {
+                System.out.println("[PERF] [" + hfExecEnd + "] IS HOST_FN_EXECUTED session=" + sessionId +
+                        " fn=" + functionName +
+                        " handleStartTs=" + hfStart + " deserEndTs=" + hfExecStart +
+                        " execStartTs=" + hfExecStart + " execEndTs=" + hfExecEnd +
+                        " deserMs=" + (hfExecStart - hfStart) +
+                        " execMs=" + (hfExecEnd - hfExecStart) +
+                        " totalMs=" + (hfExecEnd - hfStart));
+            }
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[GrpcStreaming] Host function " + functionName + " returned: " +
                         (result != null ? result.getClass().getSimpleName() : "null"));
             }
@@ -107,7 +112,7 @@ class ExternalCallbackHandler {
             if (result != null && ProxyTypeResolver.isJsWrapperProxy(result)) {
                 String refId = handler.storeObjectReference(result);
                 String proxyType = ProxyTypeResolver.getJsWrapperProxyType(result);
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[GrpcStreaming] Serializing complex result as proxy: type=" + proxyType +
                             ", refId=" + refId);
                 }
@@ -121,8 +126,10 @@ class ExternalCallbackHandler {
                 // CRITICAL: Set proxy cache ThreadLocal before serialization.
                 // This enables lazy-loading proxy pattern for complex objects (e.g., User arrays).
                 Map<String, Object> proxyCache = handler.getProxyObjectCache();
-                System.out.println("[GrpcStreaming] Setting proxy cache ThreadLocal - cache size: " +
-                        (proxyCache != null ? proxyCache.size() : "NULL"));
+                if (JsEngineFactory.isTracingEnabled()) {
+                    System.out.println("[GrpcStreaming] Setting proxy cache ThreadLocal - cache size: " +
+                            (proxyCache != null ? proxyCache.size() : "NULL"));
+                }
                 Serializer.setSessionProxyCache(proxyCache);
                 try {
                     serializedResult = Serializer.toProto(result);
@@ -141,12 +148,14 @@ class ExternalCallbackHandler {
                             .build())
                     .build());
             long hfSentTs = System.currentTimeMillis();
-            System.out.println("[PERF] [" + hfSentTs + "] IS HOST_FN_RESPONSE_SENT session=" +
-                    sessionId + " fn=" + functionName +
-                    " handleStartTs=" + hfStart + " execEndTs=" + hfExecEnd +
-                    " serEndTs=" + hfSerEnd + " sentTs=" + hfSentTs +
-                    " serMs=" + (hfSerEnd - hfExecEnd) + " sendMs=" + (hfSentTs - hfSerEnd) +
-                    " totalHandleMs=" + (hfSentTs - hfStart));
+            if (JsEngineFactory.isTracingEnabled()) {
+                System.out.println("[PERF] [" + hfSentTs + "] IS HOST_FN_RESPONSE_SENT session=" +
+                        sessionId + " fn=" + functionName +
+                        " handleStartTs=" + hfStart + " execEndTs=" + hfExecEnd +
+                        " serEndTs=" + hfSerEnd + " sentTs=" + hfSentTs +
+                        " serMs=" + (hfSerEnd - hfExecEnd) + " sendMs=" + (hfSentTs - hfSerEnd) +
+                        " totalHandleMs=" + (hfSentTs - hfStart));
+            }
 
         } catch (Exception e) {
             log.error("[GrpcStreaming] Error in host function " + functionName, e);
@@ -154,7 +163,7 @@ class ExternalCallbackHandler {
                     .setSessionId(sessionId)
                     .setHostFunctionResponse(HostFunctionResponse.newBuilder()
                             .setSuccess(false)
-                            .setErrorMessage(e.getMessage() != null ? e.getMessage() : e.getClass().getName())
+                            .setErrorMessage(formatErrorForWire(e))
                             .build())
                     .build());
         }
@@ -179,9 +188,11 @@ class ExternalCallbackHandler {
 
         String propertyPath = request.getPropertyPath();
         long cpStart = System.currentTimeMillis();
-        System.out.println("[PERF] [" + cpStart + "] IS CTX_PROP_HANDLE_START session=" + sessionId +
-                " path=" + propertyPath + " handleStartTs=" + cpStart);
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled()) {
+            System.out.println("[PERF] [" + cpStart + "] IS CTX_PROP_HANDLE_START session=" + sessionId +
+                    " path=" + propertyPath + " handleStartTs=" + cpStart);
+        }
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] handleContextProperty: " + propertyPath + ", session: " + sessionId);
         }
 
@@ -227,13 +238,15 @@ class ExternalCallbackHandler {
                     .setContextPropertyResponse(responseBuilder.build())
                     .build());
             long cpSentTs = System.currentTimeMillis();
-            System.out.println("[PERF] [" + cpSentTs + "] IS CTX_PROP_RESPONSE_SENT session=" +
-                    sessionId + " path=" + propertyPath +
-                    " handleStartTs=" + cpStart + " execStartTs=" + cpExecStart +
-                    " execEndTs=" + cpExecEnd + " sentTs=" + cpSentTs +
-                    " execMs=" + (cpExecEnd - cpExecStart) +
-                    " serMs=" + (cpSentTs - cpExecEnd) +
-                    " totalMs=" + (cpSentTs - cpStart));
+            if (JsEngineFactory.isTracingEnabled()) {
+                System.out.println("[PERF] [" + cpSentTs + "] IS CTX_PROP_RESPONSE_SENT session=" +
+                        sessionId + " path=" + propertyPath +
+                        " handleStartTs=" + cpStart + " execStartTs=" + cpExecStart +
+                        " execEndTs=" + cpExecEnd + " sentTs=" + cpSentTs +
+                        " execMs=" + (cpExecEnd - cpExecStart) +
+                        " serMs=" + (cpSentTs - cpExecEnd) +
+                        " totalMs=" + (cpSentTs - cpStart));
+            }
 
         } catch (Exception e) {
             log.error("[GrpcStreaming] Error getting context property: " + propertyPath, e);
@@ -241,7 +254,7 @@ class ExternalCallbackHandler {
                     .setSessionId(sessionId)
                     .setContextPropertyResponse(ContextPropertyResponse.newBuilder()
                             .setSuccess(false)
-                            .setErrorMessage(e.getMessage() != null ? e.getMessage() : e.getClass().getName())
+                            .setErrorMessage(formatErrorForWire(e))
                             .build())
                     .build());
         }
@@ -263,9 +276,11 @@ class ExternalCallbackHandler {
 
         String propertyPath = request.getPropertyPath();
         long cpsStart = System.currentTimeMillis();
-        System.out.println("[PERF] [" + cpsStart + "] IS CTX_PROP_SET_HANDLE_START session=" + sessionId +
-                " path=" + propertyPath + " handleStartTs=" + cpsStart);
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled()) {
+            System.out.println("[PERF] [" + cpsStart + "] IS CTX_PROP_SET_HANDLE_START session=" + sessionId +
+                    " path=" + propertyPath + " handleStartTs=" + cpsStart);
+        }
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] handleContextPropertySet: " + propertyPath + ", session: " + sessionId);
         }
 
@@ -283,15 +298,17 @@ class ExternalCallbackHandler {
                             .build())
                     .build());
             long cpsSentTs = System.currentTimeMillis();
-            System.out.println("[PERF] [" + cpsSentTs + "] IS CTX_PROP_SET_RESPONSE_SENT session=" +
-                    sessionId + " path=" + propertyPath +
-                    " handleStartTs=" + cpsStart + " deserStartTs=" + cpsDeserStart +
-                    " execStartTs=" + cpsExecStart + " execEndTs=" + cpsExecEnd +
-                    " sentTs=" + cpsSentTs +
-                    " deserMs=" + (cpsExecStart - cpsDeserStart) +
-                    " execMs=" + (cpsExecEnd - cpsExecStart) +
-                    " sendMs=" + (cpsSentTs - cpsExecEnd) +
-                    " totalMs=" + (cpsSentTs - cpsStart));
+            if (JsEngineFactory.isTracingEnabled()) {
+                System.out.println("[PERF] [" + cpsSentTs + "] IS CTX_PROP_SET_RESPONSE_SENT session=" +
+                        sessionId + " path=" + propertyPath +
+                        " handleStartTs=" + cpsStart + " deserStartTs=" + cpsDeserStart +
+                        " execStartTs=" + cpsExecStart + " execEndTs=" + cpsExecEnd +
+                        " sentTs=" + cpsSentTs +
+                        " deserMs=" + (cpsExecStart - cpsDeserStart) +
+                        " execMs=" + (cpsExecEnd - cpsExecStart) +
+                        " sendMs=" + (cpsSentTs - cpsExecEnd) +
+                        " totalMs=" + (cpsSentTs - cpsStart));
+            }
 
         } catch (Exception e) {
             log.error("[GrpcStreaming] Error setting context property: " + propertyPath, e);
@@ -299,10 +316,27 @@ class ExternalCallbackHandler {
                     .setSessionId(sessionId)
                     .setContextPropertySetResponse(ContextPropertySetResponse.newBuilder()
                             .setSuccess(false)
-                            .setErrorMessage(e.getMessage() != null ? e.getMessage() : e.getClass().getName())
+                            .setErrorMessage(formatErrorForWire(e))
                             .build())
                     .build());
         }
+    }
+
+    /**
+     * Builds a concise error string for transmission over gRPC.
+     * Includes the exception type, message (if any), and the top stack frame
+     * so the sidecar log shows WHERE the failure happened without leaking the full trace.
+     * The full stack trace is always logged server-side via log.error() before this is called.
+     */
+    private String formatErrorForWire(Exception e) {
+
+        // e.toString() gives "java.lang.NullPointerException" or "IllegalArgumentException: some detail"
+        StringBuilder sb = new StringBuilder(e.toString());
+        StackTraceElement[] stack = e.getStackTrace();
+        if (stack.length > 0) {
+            sb.append(" at ").append(stack[0]);
+        }
+        return sb.toString();
     }
 
     /**

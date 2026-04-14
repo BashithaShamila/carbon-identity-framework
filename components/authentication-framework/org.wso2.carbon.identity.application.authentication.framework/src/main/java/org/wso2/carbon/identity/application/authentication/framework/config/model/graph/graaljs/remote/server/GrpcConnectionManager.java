@@ -25,6 +25,7 @@ import io.grpc.ManagedChannelBuilder;
 import io.grpc.TlsChannelCredentials;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineConstants;
 
 import java.io.File;
@@ -281,14 +282,22 @@ public class GrpcConnectionManager {
                 File clientKey = new File(certDir, RemoteEngineConstants.MTLS_CLIENT_KEY);
                 File caCert = new File(certDir, RemoteEngineConstants.MTLS_CA_CERT);
 
-                System.out.println("[GrpcConnectionManager] mTLS enabled - loading certs from: " +
-                        certDir.getAbsolutePath());
-                System.out.println("[GrpcConnectionManager]   client cert: " + clientCert.getAbsolutePath() +
-                        " (exists=" + clientCert.exists() + ")");
-                System.out.println("[GrpcConnectionManager]   client key:  " + clientKey.getAbsolutePath() +
-                        " (exists=" + clientKey.exists() + ")");
-                System.out.println("[GrpcConnectionManager]   CA cert:     " + caCert.getAbsolutePath() +
-                        " (exists=" + caCert.exists() + ")");
+                if (JsEngineFactory.isTracingEnabled()) {
+                    System.out.println("[GrpcConnectionManager] mTLS enabled - loading certs from: " +
+                            certDir.getAbsolutePath());
+                }
+                if (JsEngineFactory.isTracingEnabled()) {
+                    System.out.println("[GrpcConnectionManager]   client cert: " + clientCert.getAbsolutePath() +
+                            " (exists=" + clientCert.exists() + ")");
+                }
+                if (JsEngineFactory.isTracingEnabled()) {
+                    System.out.println("[GrpcConnectionManager]   client key:  " + clientKey.getAbsolutePath() +
+                            " (exists=" + clientKey.exists() + ")");
+                }
+                if (JsEngineFactory.isTracingEnabled()) {
+                    System.out.println("[GrpcConnectionManager]   CA cert:     " + caCert.getAbsolutePath() +
+                            " (exists=" + caCert.exists() + ")");
+                }
 
                 ChannelCredentials credentials = TlsChannelCredentials.newBuilder()
                         .keyManager(clientCert, clientKey)

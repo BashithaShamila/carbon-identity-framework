@@ -39,7 +39,9 @@ import static org.wso2.carbon.identity.application.authentication.framework.util
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.DEFAULT_GRPC_TARGET;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_ENGINE_MODE;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_GRPC_TARGET;
+import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_REMOTE_ENGINE_TRACING;
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.GRAALJS_SCRIPT_STATEMENTS_LIMIT;
+import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants.AdaptiveAuthentication.DEFAULT_REMOTE_ENGINE_TRACING;
 /**
  * Factory for creating JavaScript engines.
  * Supports LOCAL (in-JVM), REMOTE (External via gRPC), and HYBRID (per-request routing) modes.
@@ -74,20 +76,62 @@ public class JsEngineFactory {
 
     /**
      * Engine mode configuration value.
+     * Each constant encapsulates its own resolution strategy, eliminating the need for switch-case dispatch.
      */
     public enum EngineMode {
         /**
          * All requests use the local in-JVM GraalJS engine.
          */
-        LOCAL,
+        LOCAL {
+            @Override
+            public ExecutionMode resolve(AuthenticationContext context) {
+
+                return ExecutionMode.LOCAL;
+            }
+        },
         /**
          * All requests use the remote External engine via gRPC.
          */
-        REMOTE,
+        REMOTE {
+            @Override
+            public ExecutionMode resolve(AuthenticationContext context) {
+
+                return ExecutionMode.REMOTE;
+            }
+        },
         /**
          * Per-request routing delegated to a {@link ScriptEngineModeResolver} OSGi service.
          */
-        HYBRID
+        HYBRID {
+            @Override
+            public ExecutionMode resolve(AuthenticationContext context) {
+
+                ScriptEngineModeResolver resolver =
+                        FrameworkServiceDataHolder.getInstance().getScriptEngineModeResolver();
+
+                if (resolver == null) {
+                    log.warn("[JsEngineFactory] HYBRID mode configured but no ScriptEngineModeResolver " +
+                            "OSGi service found. Falling back to LOCAL.");
+                    return ExecutionMode.LOCAL;
+                }
+
+                ExecutionMode resolved = resolver.resolve(context);
+                if (isTracingEnabled() && log.isDebugEnabled()) {
+                    log.debug("[JsEngineFactory] HYBRID mode resolved to: " + resolved +
+                            " for SP: " + (context != null ?
+                            context.getServiceProviderName() : "null"));
+                }
+                return resolved;
+            }
+        };
+
+        /**
+         * Resolve the execution mode for a given authentication context.
+         *
+         * @param context The authentication context (may be null).
+         * @return The resolved ExecutionMode for this request.
+         */
+        public abstract ExecutionMode resolve(AuthenticationContext context);
     }
 
     // Configured engine mode.
@@ -98,6 +142,9 @@ public class JsEngineFactory {
 
     // Statement limit for local engine.
     private int javascriptResourceLimit = DEFAULT_GRAALJS_SCRIPT_STATEMENTS_LIMIT;
+
+    // Remote engine tracing toggle — guards debug/perf logs in remote package.
+    private boolean tracingEnabled = DEFAULT_REMOTE_ENGINE_TRACING;
 
     // Lazy singleton holder — JsEngineFactory is only created when getInstance() is first called.
     // This ensures initializeFromConfig() runs after IdentityUtil has been populated.
@@ -148,7 +195,7 @@ public class JsEngineFactory {
 
         RemoteEngineTransport transport = GrpcTransportProvider.getOrCreateTransport(grpcTarget);
 
-        if (log.isDebugEnabled()) {
+        if (isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[JsEngineFactory] Created remote engine with transport: " +
                     transport.getClass().getSimpleName() + ", target: " + grpcTarget);
         }
@@ -166,19 +213,6 @@ public class JsEngineFactory {
     }
 
     /**
-     * Get the current static execution mode.
-     *
-     * @return Current ExecutionMode based on engine mode (LOCAL for LOCAL, REMOTE for REMOTE/HYBRID).
-     */
-    public static ExecutionMode getCurrentMode() {
-
-        if (getInstance().engineMode == EngineMode.LOCAL) {
-            return ExecutionMode.LOCAL;
-        }
-        return ExecutionMode.REMOTE;
-    }
-
-    /**
      * Get the gRPC target address.
      *
      * @return gRPC target string (host:port).
@@ -189,6 +223,18 @@ public class JsEngineFactory {
     }
 
     /**
+     * Check if remote engine tracing is enabled.
+     * When enabled, debug/performance log statements in the remote package are active.
+     * When disabled (default), all such statements are suppressed regardless of log level.
+     *
+     * @return true if remote engine tracing is enabled.
+     */
+    public static boolean isTracingEnabled() {
+
+        return getInstance().tracingEnabled;
+    }
+
+    /**
      * Set the JavaScript statement limit.
      *
      * @param limit The statement limit.
@@ -196,19 +242,6 @@ public class JsEngineFactory {
     public void setStatementLimit(int limit) {
 
         javascriptResourceLimit = limit;
-    }
-
-    /**
-     * Get the default execution mode.
-     *
-     * @return The default ExecutionMode.
-     */
-    public ExecutionMode getDefaultMode() {
-
-        if (engineMode == EngineMode.LOCAL) {
-            return ExecutionMode.LOCAL;
-        }
-        return ExecutionMode.REMOTE;
     }
 
     /**
@@ -223,7 +256,7 @@ public class JsEngineFactory {
      */
     public ExecutionMode resolveMode(AuthenticationContext authenticationContext) {
 
-        return resolveExecutionMode(authenticationContext);
+        return engineMode.resolve(authenticationContext);
     }
 
     /**
@@ -265,58 +298,6 @@ public class JsEngineFactory {
                 .build();
     }
 
-    /**
-     * Resolve which execution mode to use for a given authentication context.
-     * <ul>
-     *   <li>LOCAL mode: always returns LOCAL.</li>
-     *   <li>REMOTE mode: always returns REMOTE.</li>
-     *   <li>HYBRID mode: delegates to the {@link ScriptEngineModeResolver} OSGi service.
-     *       Falls back to LOCAL if no resolver is available.</li>
-     * </ul>
-     *
-     * @param authenticationContext The authentication context (may be null).
-     * @return The resolved ExecutionMode.
-     */
-    private ExecutionMode resolveExecutionMode(AuthenticationContext authenticationContext) {
-
-        switch (engineMode) {
-            case LOCAL:
-                return ExecutionMode.LOCAL;
-            case REMOTE:
-                return ExecutionMode.REMOTE;
-            case HYBRID:
-                return resolveHybridMode(authenticationContext);
-            default:
-                return ExecutionMode.REMOTE;
-        }
-    }
-
-    /**
-     * Resolve execution mode in HYBRID mode by delegating to the OSGi resolver service.
-     *
-     * @param authenticationContext The authentication context (may be null).
-     * @return The resolved ExecutionMode.
-     */
-    private ExecutionMode resolveHybridMode(AuthenticationContext authenticationContext) {
-
-        ScriptEngineModeResolver resolver =
-                FrameworkServiceDataHolder.getInstance().getScriptEngineModeResolver();
-
-        if (resolver == null) {
-            log.warn("[JsEngineFactory] HYBRID mode configured but no ScriptEngineModeResolver " +
-                    "OSGi service found. Falling back to LOCAL.");
-            return ExecutionMode.LOCAL;
-        }
-
-        ExecutionMode resolved = resolver.resolve(authenticationContext);
-        if (log.isDebugEnabled()) {
-            log.debug("[JsEngineFactory] HYBRID mode resolved to: " + resolved +
-                    " for SP: " + (authenticationContext != null ?
-                    authenticationContext.getServiceProviderName() : "null"));
-        }
-        return resolved;
-    }
-
     private void initializeFromConfig() {
 
         // Read statement limit from config
@@ -350,7 +331,14 @@ public class JsEngineFactory {
             grpcTarget = target.trim();
         }
 
+        // Read remote engine tracing toggle
+        String tracingStr = IdentityUtil.getProperty(GRAALJS_REMOTE_ENGINE_TRACING);
+        if (tracingStr != null && !tracingStr.isEmpty()) {
+            tracingEnabled = Boolean.parseBoolean(tracingStr.trim());
+        }
+
         log.info("JsEngineFactory initialized. EngineMode: " + engineMode +
-                ", gRPC Target: " + grpcTarget);
+                ", gRPC Target: " + grpcTarget +
+                ", RemoteEngineTracing: " + tracingEnabled);
     }
 }

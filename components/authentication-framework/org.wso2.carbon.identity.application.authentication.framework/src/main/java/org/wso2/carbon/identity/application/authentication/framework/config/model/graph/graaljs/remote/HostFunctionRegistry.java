@@ -71,7 +71,7 @@ class HostFunctionRegistry {
             MethodInvoker invoker = new MethodInvoker(hostFuncInstance, targetMethod);
             dispatchTable.put(functionName, invoker);
 
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[HostFunctionRegistry] Registered '" + functionName + "' -> " +
                         targetMethod.getDeclaringClass().getSimpleName() + "." + targetMethod.getName() +
                         ", params=" + targetMethod.getParameterCount() +
@@ -98,7 +98,7 @@ class HostFunctionRegistry {
             throw new IllegalArgumentException("Unknown host function: " + functionName);
         }
 
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[HostFunctionRegistry] Dispatching '" + functionName + "' -> " +
                     invoker.getMethod().getName() + ", params=" + invoker.getParameterTypes().length +
                     ", args=" + (args != null ? args.length : 0));
@@ -106,7 +106,7 @@ class HostFunctionRegistry {
 
         Object[] adaptedArgs = argumentAdapter.adaptArgumentsForMethod(invoker.getMethod(), args);
 
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             for (int i = 0; i < adaptedArgs.length; i++) {
                 log.debug("[HostFunctionRegistry] Adapted arg[" + i + "]: type=" +
                         (adaptedArgs[i] != null ? adaptedArgs[i].getClass().getName() : "null"));
@@ -115,7 +115,7 @@ class HostFunctionRegistry {
 
         try {
             Object result = invoker.invoke(adaptedArgs);
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[HostFunctionRegistry] '" + functionName + "' returned: " +
                         (result != null ? result.getClass().getName() + "=" + result : "null"));
             }

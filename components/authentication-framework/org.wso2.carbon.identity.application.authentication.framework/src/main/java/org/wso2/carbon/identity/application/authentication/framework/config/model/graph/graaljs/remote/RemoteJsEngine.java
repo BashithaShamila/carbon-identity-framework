@@ -94,7 +94,7 @@ public class RemoteJsEngine implements JsEngine {
         this.argumentAdapter = new ArgumentAdapter(authContext);
         this.proxyReferenceCache = new ProxyReferenceCache();
         this.hostFunctionRegistry = new HostFunctionRegistry();
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Created with session: " + sessionId +
                     ", transport: " + transport.getClass().getSimpleName() +
                     ", SP: " + (authContext != null ? authContext.getServiceProviderName() : "null"));
@@ -104,17 +104,17 @@ public class RemoteJsEngine implements JsEngine {
     @Override
     public EvaluationResult evaluate(String script, String sourceIdentifier, Map<String, Object> initialBindings) {
         long startTime = System.currentTimeMillis();
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] evaluate() called, session: " + sessionId + ", sourceId: " + sourceIdentifier);
         }
 
         try {
             // Phase 1: Connect and setup
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Ensuring connection to remote engine");
             }
             ensureConnected();
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Connection established");
             }
             long tConnectDone = System.currentTimeMillis();
@@ -132,7 +132,7 @@ public class RemoteJsEngine implements JsEngine {
                     .setSourceIdentifier(sourceIdentifier != null ? sourceIdentifier : "script");
 
             // Serialize bindings
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Serializing " + bindings.size() + " bindings, " +
                         hostFunctions.size() + " host functions");
             }
@@ -140,7 +140,7 @@ public class RemoteJsEngine implements JsEngine {
                 // Skip "context" -- JsGraalAuthenticationContext is not Serializer-compatible.
                 // Context state is sent as structured ContextData and the External accesses it
                 // via DynamicContextProxy callbacks. Serializing it here causes a toString()
-                // fallback with WARN log. If this binding is ever needed, implement a proper
+                // If this binding is ever needed, implement a proper
                 // toProto() conversion for JsGraalAuthenticationContext first.
                 if (!RemoteEngineConstants.CONTEXT_BINDING_KEY.equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
                     requestBuilder.putBindings(entry.getKey(), Serializer.toProto(entry.getValue()));
@@ -149,7 +149,7 @@ public class RemoteJsEngine implements JsEngine {
 
             // Add host function definitions so External knows to call back
             for (String funcName : hostFunctions.keySet()) {
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Registering host function: " + funcName);
                 }
                 requestBuilder.addHostFunctions(
@@ -160,7 +160,7 @@ public class RemoteJsEngine implements JsEngine {
 
             // Add context data for context proxy reconstruction in External
             if (authContext != null) {
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Adding context data, step: " + authContext.getCurrentStep() +
                             ", subject: "
                             + (authContext.getSubject() != null ? authContext.getSubject().getUserName() : "null"));
@@ -185,12 +185,12 @@ public class RemoteJsEngine implements JsEngine {
             long tRequestBuilt = System.currentTimeMillis();
 
             // Phase 3: Transport round-trip
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Sending evaluate request to remote engine...");
             }
             EvaluateResponse response = transport.sendEvaluate(requestBuilder.build(), this);
             long tResponseReceived = System.currentTimeMillis();
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Received response, success: " + response.getSuccess());
             }
 
@@ -209,7 +209,7 @@ public class RemoteJsEngine implements JsEngine {
                 long tResponseProcessed = System.currentTimeMillis();
 
                 long isElapsed = tResponseProcessed - startTime;
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
                             "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
@@ -227,7 +227,7 @@ public class RemoteJsEngine implements JsEngine {
             } else {
                 long tResponseProcessed = System.currentTimeMillis();
                 long isElapsed = tResponseProcessed - startTime;
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
                             "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
@@ -253,7 +253,7 @@ public class RemoteJsEngine implements JsEngine {
     public EvaluationResult executeCallback(String functionSource, Object[] arguments,
             Map<String, Object> callbackBindings, AuthenticationContext context) {
         long startTime = System.currentTimeMillis();
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] executeCallback() called, session: " + sessionId +
                     ", function length: " + (functionSource != null ? functionSource.length() : 0) +
                     ", args: " + (arguments != null ? arguments.length : 0));
@@ -261,11 +261,11 @@ public class RemoteJsEngine implements JsEngine {
 
         try {
             // Phase 1: Connect and setup
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] executeCallback - ensuring connection to remote engine");
             }
             ensureConnected();
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] executeCallback - connection established");
             }
             long tConnectDone = System.currentTimeMillis();
@@ -273,20 +273,20 @@ public class RemoteJsEngine implements JsEngine {
             // Phase 2: Build request (protobuf serialization)
             // Apply callback bindings
             if (callbackBindings != null && !callbackBindings.isEmpty()) {
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Applying " + callbackBindings.size() + " callback bindings: " +
                             callbackBindings.keySet());
                 }
                 for (Map.Entry<String, Object> entry : callbackBindings.entrySet()) {
                     Object value = entry.getValue();
-                    if (log.isDebugEnabled()) {
+                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[RemoteJsEngine] Callback binding: " + entry.getKey() + " = " +
                                 (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
                     }
                     bindings.put(entry.getKey(), value);
                 }
             } else {
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] No callback bindings provided (null or empty). " +
                             "callbackBindings=" + callbackBindings);
                 }
@@ -299,7 +299,7 @@ public class RemoteJsEngine implements JsEngine {
 
             // Add context data for proxy object reconstruction
             if (context != null) {
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Adding context data, step: " + context.getCurrentStep() +
                             ", subject: " + (context.getSubject() != null ? context.getSubject().getUserName() : "null"));
                 }
@@ -321,11 +321,11 @@ public class RemoteJsEngine implements JsEngine {
 
             // Serialize arguments
             if (arguments != null) {
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Serializing " + arguments.length + " arguments");
                 }
                 for (int i = 0; i < arguments.length; i++) {
-                    if (log.isDebugEnabled()) {
+                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[RemoteJsEngine] Arg[" + i + "] type: " +
                                 (arguments[i] != null ? arguments[i].getClass().getName() : "null"));
                     }
@@ -346,11 +346,11 @@ public class RemoteJsEngine implements JsEngine {
             }
 
             // Serialize bindings (excluding host functions)
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Total bindings to serialize: " + bindings.size() +
                         ", keys: " + bindings.keySet());
             }
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Host functions (excluded from bindings): " + hostFunctions.keySet());
             }
             int bindingsAdded = 0;
@@ -362,7 +362,7 @@ public class RemoteJsEngine implements JsEngine {
                 // toProto() conversion for JsGraalAuthenticationContext first.
                 if (!RemoteEngineConstants.CONTEXT_BINDING_KEY.equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
                     Object value = entry.getValue();
-                    if (log.isDebugEnabled()) {
+                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[RemoteJsEngine] Serializing binding: " + entry.getKey() + " = " +
                                 (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
                     }
@@ -370,16 +370,16 @@ public class RemoteJsEngine implements JsEngine {
                     bindingsAdded++;
                 }
             }
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Bindings serialized: " + bindingsAdded);
             }
 
             // Add host function definitions so External knows to create stubs for callbacks
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Adding " + hostFunctions.size() + " host function definitions");
             }
             for (String funcName : hostFunctions.keySet()) {
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Adding host function: " + funcName);
                 }
                 requestBuilder.addHostFunctions(
@@ -390,7 +390,7 @@ public class RemoteJsEngine implements JsEngine {
             long tRequestBuilt = System.currentTimeMillis();
 
             // Phase 3: Transport round-trip
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Sending executeCallback request to remote engine...");
             }
             ExecuteCallbackResponse response = transport.sendExecuteCallback(requestBuilder.build(), this);
@@ -411,7 +411,7 @@ public class RemoteJsEngine implements JsEngine {
                 long tResponseProcessed = System.currentTimeMillis();
 
                 long isElapsed = tResponseProcessed - startTime;
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
                             "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
@@ -429,7 +429,7 @@ public class RemoteJsEngine implements JsEngine {
             } else {
                 long tResponseProcessed = System.currentTimeMillis();
                 long isElapsed = tResponseProcessed - startTime;
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
                             "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
@@ -482,9 +482,13 @@ public class RemoteJsEngine implements JsEngine {
             try {
                 transport.close();
             } catch (IOException e) {
-                log.debug("Error closing transport", e);
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    log.debug("Error closing transport", e);
+                }
             }
-            log.debug("RemoteJsEngine closed for session: " + sessionId);
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                log.debug("RemoteJsEngine closed for session: " + sessionId);
+            }
         }
     }
 
@@ -496,7 +500,7 @@ public class RemoteJsEngine implements JsEngine {
      * Dispatches via pre-computed HostFunctionRegistry for O(1) lookup.
      */
     public Object invokeHostFunction(String functionName, Object... args) throws Exception {
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] invokeHostFunction called: " + functionName + " with " +
                     (args != null ? args.length : 0) + " args, session: " + sessionId);
         }
@@ -504,7 +508,7 @@ public class RemoteJsEngine implements JsEngine {
         // Log raw argument details for debugging.
         if (args != null) {
             for (int i = 0; i < args.length; i++) {
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Raw arg[" + i + "]: type=" +
                             (args[i] != null ? args[i].getClass().getName() : "null") +
                             ", value=" + (args[i] != null ? truncateForLog(args[i].toString()) : "null"));
@@ -529,7 +533,9 @@ public class RemoteJsEngine implements JsEngine {
      * Also supports host function return references via "__hostref__" prefix.
      */
     public Object getContextProperty(String propertyPath) throws Exception {
-        log.debug("[RemoteJsEngine] getContextProperty called: " + propertyPath + ", session: " + sessionId);
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] getContextProperty called: " + propertyPath + ", session: " + sessionId);
+        }
 
         // Handle proxy object property access: "__proxyref__::<referenceId>::<property>"
         // This enables lazy loading of complex objects (e.g., User objects from getUsersWithClaimValues)
@@ -554,8 +560,10 @@ public class RemoteJsEngine implements JsEngine {
         String[] parts = propertyPath.split(RemoteEngineConstants.PATH_SEPARATOR);
         Object result = PropertyPathNavigator.navigatePath(parts, 0, jsContext);
 
-        log.debug("[RemoteJsEngine] getContextProperty '" + propertyPath + "' = " +
-                (result != null ? result.getClass().getSimpleName() : "null"));
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] getContextProperty '" + propertyPath + "' = " +
+                    (result != null ? result.getClass().getSimpleName() : "null"));
+        }
         return result;
     }
 
@@ -568,7 +576,7 @@ public class RemoteJsEngine implements JsEngine {
      * proxy object references via "__proxyref__" prefix.
      */
     public boolean setContextProperty(String propertyPath, Object value) throws Exception {
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] setContextProperty called: " + propertyPath + " = " +
                     (value != null ? value.getClass().getSimpleName() : "null") + ", session: " + sessionId);
         }
@@ -624,16 +632,16 @@ public class RemoteJsEngine implements JsEngine {
     }
 
     private void ensureConnected() throws IOException {
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] ensureConnected - transport: " + transport.getClass().getSimpleName() +
                     ", connected: " + transport.isConnected());
         }
         if (!transport.isConnected()) {
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Connecting transport");
             }
             transport.connect();
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Connected to remote engine successfully");
             }
         }

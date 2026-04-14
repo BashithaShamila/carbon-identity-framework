@@ -20,6 +20,7 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineTransport;
 
 /**
@@ -56,7 +57,7 @@ public class GrpcTransportProvider {
         if (streamingInstance == null) {
             synchronized (lock) {
                 if (streamingInstance == null) {
-                    if (log.isDebugEnabled()) {
+                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[GrpcTransportProvider] Creating GrpcStreamingTransportImpl " +
                                 "for target: " + grpcTarget);
                     }

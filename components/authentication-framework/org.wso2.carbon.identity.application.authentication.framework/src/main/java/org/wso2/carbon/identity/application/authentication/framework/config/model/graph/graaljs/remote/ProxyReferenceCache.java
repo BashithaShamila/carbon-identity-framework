@@ -59,8 +59,10 @@ class ProxyReferenceCache {
     String storeObjectReference(Object obj) {
         String refId = UUID.randomUUID().toString();
         hostFunctionRefs.put(refId, obj);
-        log.debug("[RemoteJsEngine] Stored object reference: " + refId +
-                " -> " + (obj != null ? obj.getClass().getSimpleName() : "null"));
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] Stored object reference: " + refId +
+                    " -> " + (obj != null ? obj.getClass().getSimpleName() : "null"));
+        }
         return refId;
     }
 
@@ -83,14 +85,14 @@ class ProxyReferenceCache {
             return null;
         }
 
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Retrieved proxy object for refId: " + refId +
                     ", type: " + root.getClass().getName());
         }
 
         Object result = PropertyPathNavigator.navigatePath(parts, 1, root);
 
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] getProxyObjectProperty '" + path + "' = " +
                     (result != null ? result.getClass().getSimpleName() : "null"));
         }
@@ -113,8 +115,10 @@ class ProxyReferenceCache {
 
         Object result = PropertyPathNavigator.navigatePath(parts, 1, root);
 
-        log.debug("[RemoteJsEngine] getHostRefProperty '" + path + "' = " +
-                (result != null ? result.getClass().getSimpleName() : "null"));
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            log.debug("[RemoteJsEngine] getHostRefProperty '" + path + "' = " +
+                    (result != null ? result.getClass().getSimpleName() : "null"));
+        }
         return result;
     }
 

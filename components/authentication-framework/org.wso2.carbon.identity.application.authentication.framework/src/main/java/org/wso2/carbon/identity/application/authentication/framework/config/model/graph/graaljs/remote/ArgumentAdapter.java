@@ -70,7 +70,7 @@ class ArgumentAdapter {
         Class<?>[] paramTypes = method.getParameterTypes();
         boolean isVarArgs = method.isVarArgs();
 
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] adaptArgumentsForMethod: paramCount=" + paramTypes.length +
                     ", argsCount=" + (args != null ? args.length : 0) + ", isVarArgs=" + isVarArgs);
         }
@@ -91,7 +91,7 @@ class ArgumentAdapter {
             Object arg = args[i];
             Class<?> paramType = paramTypes[i];
 
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Adapting arg[" + i + "] from " +
                         (arg != null ? arg.getClass().getSimpleName() : "null") +
                         " to " + paramType.getSimpleName());
@@ -120,7 +120,7 @@ class ArgumentAdapter {
         int fixedParamCount = paramTypes.length - 1;
         Class<?> varArgType = paramTypes[fixedParamCount].getComponentType();
 
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Adapting varargs method: fixedParams=" + fixedParamCount +
                     ", varArgType=" + varArgType.getSimpleName() + ", totalArgs=" + args.length);
         }
@@ -129,7 +129,7 @@ class ArgumentAdapter {
 
         // Adapt fixed parameters.
         for (int i = 0; i < fixedParamCount && i < args.length; i++) {
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Adapting fixed arg[" + i + "] from " +
                         (args[i] != null ? args[i].getClass().getSimpleName() : "null") +
                         " to " + paramTypes[i].getSimpleName());
@@ -147,12 +147,12 @@ class ArgumentAdapter {
             if (args[i] != null) {
                 Object adapted = adaptSingleArgument(args[i], varArgType);
                 nonNullVarArgs.add(adapted);
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Adapting vararg[" + (i - fixedParamCount) + "] from " +
                             args[i].getClass().getSimpleName() + " to " + varArgType.getSimpleName());
                 }
             } else {
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Skipping null vararg at index " + i +
                             " (undefined/null from remote serialization)");
                 }
@@ -170,7 +170,7 @@ class ArgumentAdapter {
             adaptedArgs[fixedParamCount] = Array.newInstance(varArgType, 0);
         }
 
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Final varargs count: " + nonNullVarArgs.size() +
                     " (from " + (args.length - fixedParamCount) + " raw args)");
         }
@@ -196,7 +196,7 @@ class ArgumentAdapter {
             if (Boolean.TRUE.equals(map.get(RemoteEngineConstants.IS_CONTEXT_PROXY))) {
                 String proxyType = (String) map.get(RemoteEngineConstants.PROXY_TYPE_FIELD);
                 String basePath = (String) map.get(RemoteEngineConstants.BASE_PATH_FIELD);
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Received context proxy marker: type=" + proxyType +
                             ", basePath=" + basePath);
                 }
@@ -204,7 +204,7 @@ class ArgumentAdapter {
                 // Reconstruct the actual object based on proxyType and basePath
                 Object reconstructed = reconstructFromContextProxy(proxyType, basePath, paramType);
                 if (reconstructed != null) {
-                    if (log.isDebugEnabled()) {
+                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[RemoteJsEngine] Reconstructed " + reconstructed.getClass().getSimpleName() +
                                 " from context proxy marker");
                     }
@@ -217,7 +217,7 @@ class ArgumentAdapter {
         // JsAuthenticationContext is the abstract base; JsGraalAuthenticationContext extends it.
         // All host function methods declare the parameter as the base type.
         if (JsAuthenticationContext.class.isAssignableFrom(paramType)) {
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Reconstructed JsGraalAuthenticationContext from stored authContext");
             }
             return new JsGraalAuthenticationContext(authContext);
@@ -296,7 +296,7 @@ class ArgumentAdapter {
         if (paramType == Object.class) {
             if (arg instanceof Map) {
                 Map<String, Object> mapArg = (Map<String, Object>) arg;
-                if (log.isDebugEnabled()) {
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Coercing number types in Map with " + mapArg.size() + " entries");
                 }
                 return coerceMapNumberTypes(mapArg);
@@ -325,7 +325,7 @@ class ArgumentAdapter {
                     // Whole number — convert to Integer (or Long if out of int range)
                     if (d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
                         entry.setValue((int) d);
-                        if (log.isDebugEnabled()) {
+                        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                             log.debug("[RemoteJsEngine] Coerced " + entry.getKey() + ": " + d + " -> " + (int) d);
                         }
                     } else {
@@ -355,7 +355,7 @@ class ArgumentAdapter {
 
         // If basePath is empty or null, return the full context
         if (basePath == null || basePath.isEmpty()) {
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Reconstructing root context");
             }
             return new JsGraalAuthenticationContext(authContext);
@@ -369,7 +369,7 @@ class ArgumentAdapter {
         if ("authenticateduser".equals(proxyType) && isStepSubjectPath(basePath)) {
             String[] parts = basePath.split(RemoteEngineConstants.PATH_SEPARATOR);
             int stepNum = Integer.parseInt(parts[1]);
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Direct reconstruction of authenticateduser for step " + stepNum);
             }
 
@@ -393,7 +393,7 @@ class ArgumentAdapter {
                     if (idPData != null && idPData.getUser() != null) {
                         Object result = JsWrapperFactoryProvider.getInstance().getWrapperFactory()
                                 .createJsAuthenticatedUser(authContext, idPData.getUser(), stepNum, authenticatedIdp);
-                        if (log.isDebugEnabled()) {
+                        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                             log.debug("[RemoteJsEngine] Directly reconstructed " +
                                     result.getClass().getSimpleName() + " for step " + stepNum);
                         }
@@ -410,7 +410,7 @@ class ArgumentAdapter {
         // Generic proxy navigation fallback for other proxy types/paths.
         // Delegates to PropertyPathNavigator which handles ProxyObject, ProxyArray,
         // Map, and reflection getter traversal (including the OSGi classloader fallback).
-        if (log.isDebugEnabled()) {
+        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Navigating to nested property: " + basePath);
         }
 
@@ -419,7 +419,7 @@ class ArgumentAdapter {
             Object root = new JsGraalAuthenticationContext(authContext);
             Object result = PropertyPathNavigator.navigatePath(pathParts, 0, root);
 
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Successfully navigated to: " + basePath +
                         ", result type: " + (result != null ? result.getClass().getSimpleName() : "null"));
             }

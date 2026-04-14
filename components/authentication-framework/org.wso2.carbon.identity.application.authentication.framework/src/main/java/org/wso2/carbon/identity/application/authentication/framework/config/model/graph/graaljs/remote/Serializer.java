@@ -162,12 +162,16 @@ public class Serializer {
         if (serializable instanceof List) {
             @SuppressWarnings("unchecked")
             List<Object> listValue = (List<Object>) serializable;
-            System.out.println("[Serializer] Serializing List with " + listValue.size() + " elements");
+            if (JsEngineFactory.isTracingEnabled()) {
+                System.out.println("[Serializer] Serializing List with " + listValue.size() + " elements");
+            }
             SerializedArray.Builder arrayBuilder = SerializedArray.newBuilder();
             for (int i = 0; i < listValue.size(); i++) {
                 Object element = listValue.get(i);
-                System.out.println("[Serializer] List element[" + i + "] type: " +
-                        (element != null ? element.getClass().getName() : "null"));
+                if (JsEngineFactory.isTracingEnabled()) {
+                    System.out.println("[Serializer] List element[" + i + "] type: " +
+                            (element != null ? element.getClass().getName() : "null"));
+                }
                 arrayBuilder.addElements(toProto(element));
             }
             return SerializedValue.newBuilder()
@@ -232,12 +236,10 @@ public class Serializer {
                 cache.put(referenceId, serializable);
 
                 String proxyType = ProxyTypeResolver.getJsWrapperProxyType(serializable);
-                System.out.println("Created explicit proxy marker for nested JS Wrapper: " +
+                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    log.debug("Created explicit proxy marker for nested JS Wrapper: " +
                             serializable.getClass().getName() + " with referenceId: " + referenceId);
-//                if (log.isDebugEnabled()) {
-//                    log.debug("Created explicit proxy marker for nested JS Wrapper: " +
-//                            serializable.getClass().getName() + " with referenceId: " + referenceId);
-//                }
+                }
 
                 return SerializedValue.newBuilder()
                         .setProxyObject(SerializedProxyObject.newBuilder()
@@ -261,9 +263,11 @@ public class Serializer {
         // only that property on-demand.
         Map<String, Object> cache = getSessionProxyCache();
         boolean shouldProxy = ProxyTypeResolver.shouldUseProxyPattern(serializable);
-        System.out.println("[Serializer] POJO check for " + serializable.getClass().getName() +
-                " - cache=" + (cache != null ? "available" : "NULL") +
-                " shouldProxy=" + shouldProxy);
+        if (JsEngineFactory.isTracingEnabled()) {
+            System.out.println("[Serializer] POJO check for " + serializable.getClass().getName() +
+                    " - cache=" + (cache != null ? "available" : "NULL") +
+                    " shouldProxy=" + shouldProxy);
+        }
 
         if (cache != null && shouldProxy) {
             // Create a unique reference ID for this object
@@ -272,9 +276,11 @@ public class Serializer {
             // Store the actual object in the session cache
             cache.put(referenceId, serializable);
 
-            System.out.println("[Serializer] ✓ Created proxy marker for " +
-                    serializable.getClass().getName() + " with referenceId: " + referenceId);
-            if (log.isDebugEnabled()) {
+            if (JsEngineFactory.isTracingEnabled()) {
+                System.out.println("[Serializer] ✓ Created proxy marker for " +
+                        serializable.getClass().getName() + " with referenceId: " + referenceId);
+            }
+            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("Created proxy marker for " + serializable.getClass().getName() +
                         " with referenceId: " + referenceId);
             }
