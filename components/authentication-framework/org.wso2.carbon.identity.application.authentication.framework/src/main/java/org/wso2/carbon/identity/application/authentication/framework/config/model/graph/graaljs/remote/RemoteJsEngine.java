@@ -507,18 +507,16 @@ public class RemoteJsEngine implements JsEngine {
 
         // Log raw argument details for debugging.
         if (args != null) {
-            for (int i = 0; i < args.length; i++) {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            boolean shouldLog = JsEngineFactory.isTracingEnabled() && log.isDebugEnabled();
+
+            if (shouldLog) {
+                for (int i = 0; i < args.length; i++) {
                     log.debug("[RemoteJsEngine] Raw arg[" + i + "]: type=" +
                             (args[i] != null ? args[i].getClass().getName() : "null") +
                             ", value=" + (args[i] != null ? truncateForLog(args[i].toString()) : "null"));
                 }
             }
         }
-
-        // No thread-local setup/teardown needed — invokeHostFunction now runs on Thread A
-        // (the IS HTTP thread) which already has contextForJs, currentBuilder,
-        // dynamicallyBuiltBaseNode, and CarbonContext set by the caller.
 
         return hostFunctionRegistry.invoke(functionName, argumentAdapter, args);
     }

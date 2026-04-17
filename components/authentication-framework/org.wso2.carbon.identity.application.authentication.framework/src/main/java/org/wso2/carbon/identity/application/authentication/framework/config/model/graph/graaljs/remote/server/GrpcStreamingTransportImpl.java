@@ -407,13 +407,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
                     log.warn("[GrpcStreaming] Unexpected message type in loop: " + msg.getPayloadCase());
             }
 
-            // After processing a callback, check for stream error before next poll.
-            // The sidecar won't send more callbacks after a stream error, so this is
-            // a safe point to surface it.
-            Throwable err = streamError.get();
-            if (err != null) {
-                throw new IOException("Stream error during callback processing: " + err.getMessage(), err);
-            }
+            // NOTE: Do NOT check streamError here. If the External sent a terminal response
+            // followed by onCompleted() while Thread A was processing a callback, both the
+            // response and the SENTINEL are already in the queue. Checking streamError here
+            // would throw immediately without dequeuing the terminal response, causing a
+            // misleading "Stream completed without response" error. Instead, let the loop
+            // poll the queue — it will find either the terminal response (and return it) or
+            // the SENTINEL (and throw with the proper error context).
         }
     }
 
@@ -441,59 +441,50 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
                             ", session: " + message.getSessionId());
                 }
 
-                switch (message.getPayloadCase()) {
-                    case EVALUATE_RESPONSE:
-                        if (JsEngineFactory.isTracingEnabled()) {
+                if (JsEngineFactory.isTracingEnabled()) {
+                    switch (message.getPayloadCase()) {
+                        case EVALUATE_RESPONSE:
                             System.out.println("[PERF] [" + now + "] IS EVALUATE_RESPONSE_ARRIVED session=" +
                                     sessionId + " streamStartTs=" + streamStartTime +
                                     " arrivedTs=" + now +
                                     " sinceStreamStartMs=" + (now - streamStartTime));
-                        }
-                        break;
+                            break;
 
-                    case EXECUTE_CALLBACK_RESPONSE:
-                        if (JsEngineFactory.isTracingEnabled()) {
+                        case EXECUTE_CALLBACK_RESPONSE:
                             System.out.println("[PERF] [" + now + "] IS EXEC_CALLBACK_RESPONSE_ARRIVED session=" +
                                     sessionId + " streamStartTs=" + streamStartTime +
                                     " arrivedTs=" + now +
                                     " sinceStreamStartMs=" + (now - streamStartTime));
-                        }
-                        break;
+                            break;
 
-                    case HOST_FUNCTION_REQUEST:
-                        if (JsEngineFactory.isTracingEnabled()) {
+                        case HOST_FUNCTION_REQUEST:
                             System.out.println("[PERF] [" + now + "] IS HOST_FN_REQUEST_RECEIVED session=" +
                                     sessionId + " fn=" + message.getHostFunctionRequest().getFunctionName() +
                                     " streamStartTs=" + streamStartTime +
                                     " receivedTs=" + now +
                                     " sinceStreamStartMs=" + (now - streamStartTime));
-                        }
-                        break;
+                            break;
 
-                    case CONTEXT_PROPERTY_REQUEST:
-                        if (JsEngineFactory.isTracingEnabled()) {
+                        case CONTEXT_PROPERTY_REQUEST:
                             System.out.println("[PERF] [" + now + "] IS CTX_PROP_REQUEST_RECEIVED session=" +
                                     sessionId + " path=" + message.getContextPropertyRequest().getPropertyPath() +
                                     " streamStartTs=" + streamStartTime +
                                     " receivedTs=" + now +
                                     " sinceStreamStartMs=" + (now - streamStartTime));
-                        }
-                        break;
+                            break;
 
-                    case CONTEXT_PROPERTY_SET_REQUEST:
-                        if (JsEngineFactory.isTracingEnabled()) {
+                        case CONTEXT_PROPERTY_SET_REQUEST:
                             System.out.println("[PERF] [" + now + "] IS CTX_PROP_SET_REQUEST_RECEIVED session=" +
                                     sessionId + " path=" + message.getContextPropertySetRequest().getPropertyPath() +
                                     " streamStartTs=" + streamStartTime +
                                     " receivedTs=" + now +
                                     " sinceStreamStartMs=" + (now - streamStartTime));
-                        }
-                        break;
+                            break;
 
-                    default:
-                        log.warn("[GrpcStreaming] Unexpected message type: " + message.getPayloadCase());
+                        default:
+                            log.warn("[GrpcStreaming] Unexpected message type: " + message.getPayloadCase());
+                    }
                 }
-
                 // All messages go into the queue — Thread A dispatches
                 messageQueue.offer(message);
             }

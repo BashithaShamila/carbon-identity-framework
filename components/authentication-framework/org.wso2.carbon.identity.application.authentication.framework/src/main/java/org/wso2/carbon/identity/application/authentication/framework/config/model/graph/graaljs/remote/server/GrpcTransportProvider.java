@@ -37,10 +37,6 @@ public class GrpcTransportProvider {
     private static volatile GrpcStreamingTransportImpl streamingInstance;
     private static final Object lock = new Object();
 
-    private GrpcTransportProvider() {
-        // Utility class
-    }
-
     /**
      * Get or create the singleton gRPC streaming transport.
      *
