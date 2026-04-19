@@ -21,9 +21,10 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.graalvm.polyglot.Value;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 
-import java.util.ArrayList;
-import java.util.List;
+import org.graalvm.polyglot.proxy.ProxyObject;
+import org.graalvm.polyglot.proxy.ProxyArray;
 import java.util.Map;
 
 /**
@@ -34,20 +35,7 @@ import java.util.Map;
  * - ProxyObject (getMember)
  * - ProxyArray (get by numeric index)
  * - Map (get by key)
- * - POJO (reflection getter fallback)
  *
- * Special segments:
- * - "__keys__" triggers member key enumeration (edge case #12)
- * - Numeric segments use ProxyArray.get() not getMember() (edge case #6)
- * - OSGi classloader fallback via reflection for ProxyArray (edge case #7)
- *
- * This class extracts the common navigation logic from:
- * - RemoteJsEngine.getContextProperty()
- * - RemoteJsEngine.getHostRefProperty()
- * - RemoteJsEngine.getProxyObjectProperty()
- * - RemoteJsEngine.setContextProperty()
- * - RemoteJsEngine.setHostRefProperty()
- * - RemoteJsEngine.reconstructFromContextProxy()
  */
 public final class PropertyPathNavigator {
 
@@ -65,13 +53,10 @@ public final class PropertyPathNavigator {
      * @return true if non-empty and all characters are digits
      */
     static boolean isNumeric(String s) {
-        if (s == null || s.isEmpty()) {
-            return false;
-        }
-        for (int i = 0; i < s.length(); i++) {
-            if (!Character.isDigit(s.charAt(i))) {
-                return false;
-            }
+        if (s == null || s.isEmpty()) return false;
+
+        for (char c : s.toCharArray()) {
+            if (!Character.isDigit(c)) return false;
         }
         return true;
     }
@@ -90,7 +75,7 @@ public final class PropertyPathNavigator {
         for (int i = startIndex; i < pathParts.length; i++) {
             String part = pathParts[i];
             if (current == null) {
-                return null;
+                throw new IllegalStateException("Null encountered while navigating path at segment: " + part);
             }
 
             // Edge case #12: __keys__ triggers member key enumeration
@@ -123,10 +108,9 @@ public final class PropertyPathNavigator {
         for (int i = startIndex; i < pathParts.length - 1; i++) {
             String part = pathParts[i];
             if (parent == null) {
-                log.warn("[PropertyPathNavigator] Null encountered at path segment: " + part);
-                return false;
+                throw new IllegalStateException("Null encountered while navigating path at segment: " + part );
             }
-            parent = navigateSingleStepForSet(parent, part);
+            parent = navigateSingleStep(parent, part);
         }
 
         if (parent == null) {
@@ -144,237 +128,77 @@ public final class PropertyPathNavigator {
      * Handles ProxyArray, ProxyObject, Map, and reflection getter.
      */
     private static Object navigateSingleStep(Object current, String part) {
-        // Edge case #6: Numeric segments on ProxyArray use get(index), not getMember()
-        if (isNumeric(part) && current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
+        // Numeric segments on ProxyArray use get(index), not getMember()
+        if (isNumeric(part) && current instanceof ProxyArray) {
             int index = Integer.parseInt(part);
-            Object result = ((org.graalvm.polyglot.proxy.ProxyArray) current).get(index);
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            Object result = ((ProxyArray) current).get(index);
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[PropertyPathNavigator] Accessed array index " + index + " -> " +
                         (result != null ? result.getClass().getSimpleName() : "null"));
             }
             return result;
         }
 
-        // Numeric on ProxyObject - try getMember with string key
-        if (isNumeric(part) && current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-            return ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
-        }
-
         // Standard member access on ProxyObject
-        if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-            Object result = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (current instanceof ProxyObject) {
+            Object result = ((ProxyObject) current).getMember(part);
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[PropertyPathNavigator] Accessed member '" + part + "' on proxy -> " +
                         (result != null ? result.getClass().getSimpleName() : "null"));
             }
             return result;
         }
 
-        // Map access
-        if (current instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> map = (Map<String, Object>) current;
-            return map.get(part);
-        }
+        throw new IllegalStateException(
+                "Cannot navigate property '" + part + "' on type: " +
+                        current.getClass().getName() +
+                        " (value=" + current + ")"
+        );
 
-        // Reflection getter as last resort
-        return invokeGetter(current, part);
     }
-
-    /**
-     * Navigate a single step for SET operations.
-     * Includes the OSGi classloader reflection fallback (edge case #7)
-     * for ProxyArray where instanceof may not match across bundles.
-     */
-    private static Object navigateSingleStepForSet(Object current, String part) {
-        if (isNumeric(part)) {
-            int index = Integer.parseInt(part);
-
-            // Try ProxyArray.get first
-            if (current instanceof org.graalvm.polyglot.proxy.ProxyArray) {
-                return ((org.graalvm.polyglot.proxy.ProxyArray) current).get(index);
-            }
-
-            // Edge case #7: OSGi classloader fallback - instanceof fails across bundles,
-            // so try reflection on get(long) directly
-            try {
-                java.lang.reflect.Method getMethod = current.getClass().getMethod("get", long.class);
-                Object result = getMethod.invoke(current, (long) index);
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                    log.debug("[PropertyPathNavigator] Used reflection get(" + index +
-                            ") on " + current.getClass().getSimpleName());
-                }
-                return result;
-            } catch (NoSuchMethodException nsme) {
-                // Not a ProxyArray-like object, try ProxyObject.getMember
-                if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-                    return ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
-                }
-                log.warn("[PropertyPathNavigator] Cannot navigate numeric segment: " + part +
-                        " on type: " + current.getClass().getName());
-                return null;
-            } catch (Exception e) {
-                log.warn("[PropertyPathNavigator] Reflection get() failed for segment: " + part, e);
-                return null;
-            }
-        }
-
-        // Non-numeric segment
-        if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-            return ((org.graalvm.polyglot.proxy.ProxyObject) current).getMember(part);
-        }
-
-        if (current instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> map = (Map<String, Object>) current;
-            return map.get(part);
-        }
-
-        // Reflection getter fallback
-        return invokeGetter(current, part);
-    }
-
     /**
      * Set the final property value on the parent object.
      * Tries ProxyObject.putMember, reflection putMember, Map.put, and reflection setter.
      */
     private static boolean setFinalProperty(Object parent, String finalPart, Object value) {
         // Try ProxyObject.putMember with GraalVM Value wrapping
-        if (parent instanceof org.graalvm.polyglot.proxy.ProxyObject) {
+        if (parent instanceof ProxyObject) {
             try {
                 Value wrappedValue = Value.asValue(value);
-                ((org.graalvm.polyglot.proxy.ProxyObject) parent).putMember(finalPart, wrappedValue);
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                ((ProxyObject) parent).putMember(finalPart, wrappedValue);
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[PropertyPathNavigator] Set property via putMember: " + finalPart);
                 }
                 return true;
             } catch (Exception e) {
-                log.warn("[PropertyPathNavigator] Direct putMember failed: " + e.getMessage());
-            }
-        } else {
-            // Edge case #7: Reflection fallback for OSGi classloader issues
-            try {
-                java.lang.reflect.Method putMethod = parent.getClass().getMethod(
-                        "putMember", String.class, Value.class);
-                Value wrappedValue = Value.asValue(value);
-                putMethod.invoke(parent, finalPart, wrappedValue);
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                    log.debug("[PropertyPathNavigator] Set property via reflection putMember: " + finalPart);
-                }
-                return true;
-            } catch (NoSuchMethodException nsme) {
-                // No putMember method — fall through
-            } catch (Exception e) {
-                log.warn("[PropertyPathNavigator] Reflection putMember failed: " + e.getMessage());
+                throw new IllegalStateException(
+                        "Failed to set property '" + finalPart + "' on ProxyObject: " +
+                                parent.getClass().getName(), e
+                );
             }
         }
 
-        // Try Map.put
-        if (parent instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> map = (Map<String, Object>) parent;
-            map.put(finalPart, value);
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                log.debug("[PropertyPathNavigator] Set property in map: " + finalPart);
-            }
-            return true;
-        }
-
-        // Try reflection setter
-        try {
-            String setterName = "set" + Character.toUpperCase(finalPart.charAt(0)) + finalPart.substring(1);
-            java.lang.reflect.Method[] methods = parent.getClass().getMethods();
-            for (java.lang.reflect.Method method : methods) {
-                if (method.getName().equals(setterName) && method.getParameterCount() == 1) {
-                    method.invoke(parent, value);
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                        log.debug("[PropertyPathNavigator] Set property via setter: " + finalPart);
-                    }
-                    return true;
-                }
-            }
-        } catch (Exception e) {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                log.debug("[PropertyPathNavigator] Setter failed for: " + finalPart, e);
-            }
-        }
-
-        log.warn("[PropertyPathNavigator] Could not set property: " + finalPart);
-        return false;
+        throw new IllegalStateException(
+                "Unsupported type for setting property: " + parent.getClass().getName() +
+                        ", property: " + finalPart
+        );
     }
 
     /**
      * Get member keys from an object.
-     * Handles ProxyObject (getMemberKeys) and POJO (bean introspection).
+     * Handles ProxyObject (getMemberKeys)
      */
     public static Object getMemberKeys(Object current) {
-        if (current instanceof org.graalvm.polyglot.proxy.ProxyObject) {
-            Object keys = ((org.graalvm.polyglot.proxy.ProxyObject) current).getMemberKeys();
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (current instanceof ProxyObject) {
+            Object keys = ((ProxyObject) current).getMemberKeys();
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[PropertyPathNavigator] __keys__ on proxy -> " +
                         (keys != null ? keys.getClass().getSimpleName() : "null"));
             }
             return keys;
         }
-
-        // For POJOs, return list of property names via bean introspection
-        if (current != null) {
-            try {
-                List<String> keys = new ArrayList<>();
-                for (java.lang.reflect.Method m : current.getClass().getMethods()) {
-                    if (m.getParameterCount() == 0 && m.getName().startsWith("get") &&
-                            !"getClass".equals(m.getName())) {
-                        String prop = Character.toLowerCase(m.getName().charAt(3)) +
-                                m.getName().substring(4);
-                        keys.add(prop);
-                    }
-                }
-                if (!keys.isEmpty()) {
-                    return keys;
-                }
-            } catch (Exception e) {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                    log.debug("[PropertyPathNavigator] Error getting keys for object: " + e.getMessage());
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Invoke a getter method via reflection.
-     *
-     * @param target   The object to invoke the getter on
-     * @param property The property name (e.g., "username" invokes "getUsername()")
-     * @return The getter result, or null if not found
-     */
-    private static Object invokeGetter(Object target, String property) {
-        try {
-            String getterName = "get" + Character.toUpperCase(property.charAt(0)) + property.substring(1);
-            java.lang.reflect.Method getter = target.getClass().getMethod(getterName);
-            Object result = getter.invoke(target);
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                log.debug("[PropertyPathNavigator] Accessed property '" + property + "' via " + getterName +
-                        " -> " + (result != null ? result.getClass().getSimpleName() : "null"));
-            }
-            return result;
-        } catch (NoSuchMethodException e) {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                log.debug("[PropertyPathNavigator] No getter for property: " + property +
-                        " on class: " + target.getClass().getName());
-            }
-            return null;
-        } catch (IllegalAccessException e) {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                log.debug("[PropertyPathNavigator] Getter not accessible for property: " + property +
-                        " on class: " + target.getClass().getName());
-            }
-            return null;
-        } catch (java.lang.reflect.InvocationTargetException e) {
-            log.error("[PropertyPathNavigator] Getter threw exception for property: " + property +
-                    " on class: " + target.getClass().getName(), e.getCause());
-            return null;
-        }
+        throw new IllegalStateException(
+                "Cannot extract keys from type: " + current.getClass().getName()
+        );
     }
 }

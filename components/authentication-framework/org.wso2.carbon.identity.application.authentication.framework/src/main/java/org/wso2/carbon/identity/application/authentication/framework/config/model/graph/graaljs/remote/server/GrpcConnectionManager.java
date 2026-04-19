@@ -25,7 +25,7 @@ import io.grpc.ManagedChannelBuilder;
 import io.grpc.TlsChannelCredentials;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineConstants;
 
 import java.io.File;
@@ -63,7 +63,7 @@ public class GrpcConnectionManager {
     // guarantees that concurrent readers see either null or a fully initialized array.
     private volatile ManagedChannel[] channelPool;
     private final AtomicInteger channelIndex = new AtomicInteger(0);
-    private int channelPoolSize = 4; // default pool size, configurable via graaljs.grpc.channel.pool.size
+    private int channelPoolSize = 4; // default pool size
     private String grpcTarget;
     private int channelIdleTimeout = 180; // seconds
 
@@ -232,8 +232,6 @@ public class GrpcConnectionManager {
      * Load configuration from deployment.toml or system properties.
      */
     private void loadConfiguration() {
-        // Future: Load from IdentityUtil.getProperty() or similar
-        // For now, using defaults
 
         // Check system properties for override
         String idleTimeoutStr = System.getProperty("graaljs.grpc.channel.idle.timeout");
@@ -282,19 +280,19 @@ public class GrpcConnectionManager {
                 File clientKey = new File(certDir, RemoteEngineConstants.MTLS_CLIENT_KEY);
                 File caCert = new File(certDir, RemoteEngineConstants.MTLS_CA_CERT);
 
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[GrpcConnectionManager] mTLS enabled - loading certs from: " +
                             certDir.getAbsolutePath());
                 }
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[GrpcConnectionManager]   client cert: " + clientCert.getAbsolutePath() +
                             " (exists=" + clientCert.exists() + ")");
                 }
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[GrpcConnectionManager]   client key:  " + clientKey.getAbsolutePath() +
                             " (exists=" + clientKey.exists() + ")");
                 }
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[GrpcConnectionManager]   CA cert:     " + caCert.getAbsolutePath() +
                             " (exists=" + caCert.exists() + ")");
                 }

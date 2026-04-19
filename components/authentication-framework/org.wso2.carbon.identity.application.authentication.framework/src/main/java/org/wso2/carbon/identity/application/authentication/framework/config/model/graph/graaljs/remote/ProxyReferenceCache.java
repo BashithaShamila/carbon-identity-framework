@@ -20,6 +20,7 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 
 import java.util.Map;
 import java.util.UUID;
@@ -59,7 +60,7 @@ class ProxyReferenceCache {
     String storeObjectReference(Object obj) {
         String refId = UUID.randomUUID().toString();
         hostFunctionRefs.put(refId, obj);
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Stored object reference: " + refId +
                     " -> " + (obj != null ? obj.getClass().getSimpleName() : "null"));
         }
@@ -85,14 +86,14 @@ class ProxyReferenceCache {
             return null;
         }
 
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Retrieved proxy object for refId: " + refId +
                     ", type: " + root.getClass().getName());
         }
 
         Object result = PropertyPathNavigator.navigatePath(parts, 1, root);
 
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] getProxyObjectProperty '" + path + "' = " +
                     (result != null ? result.getClass().getSimpleName() : "null"));
         }
@@ -115,7 +116,7 @@ class ProxyReferenceCache {
 
         Object result = PropertyPathNavigator.navigatePath(parts, 1, root);
 
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] getHostRefProperty '" + path + "' = " +
                     (result != null ? result.getClass().getSimpleName() : "null"));
         }

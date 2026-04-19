@@ -20,7 +20,7 @@ package org.wso2.carbon.identity.application.authentication.framework.script.eng
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.ScriptEngineModeResolver;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 
@@ -38,29 +38,23 @@ public class DefaultScriptEngineModeResolver implements ScriptEngineModeResolver
     private static final Log log = LogFactory.getLog(DefaultScriptEngineModeResolver.class);
 
     @Override
-    public JsEngineFactory.ExecutionMode resolve(AuthenticationContext authenticationContext) {
+    public JsGraalGraphEngineModeRouter.ExecutionMode resolve(AuthenticationContext authenticationContext) {
 
         if (authenticationContext == null) {
             if (log.isDebugEnabled()) {
                 log.debug("[DefaultScriptEngineModeResolver] AuthenticationContext is null, falling back to LOCAL");
             }
-            return JsEngineFactory.ExecutionMode.LOCAL;
+            return JsGraalGraphEngineModeRouter.ExecutionMode.LOCAL;
         }
 
         String spName = authenticationContext.getServiceProviderName();
         String tenantDomain = authenticationContext.getTenantDomain();
 
-        // Example routing logic: route specific SPs to REMOTE engine.
-        // This can be extended to implement more complex routing based on
-        // tenant domain, request type, SP properties, or any other field
-        // available in the AuthenticationContext.
         if (log.isDebugEnabled()) {
             log.debug("[DefaultScriptEngineModeResolver] Resolving engine mode for SP: " + spName +
                     ", tenant: " + tenantDomain);
         }
 
-        // Default: all requests go to LOCAL engine.
-        // Override this class or deploy a custom resolver to route specific requests to REMOTE.
-        return JsEngineFactory.ExecutionMode.LOCAL;
+        return JsGraalGraphEngineModeRouter.ExecutionMode.LOCAL;
     }
 }

@@ -22,7 +22,7 @@ import io.grpc.ManagedChannel;
 import io.grpc.stub.StreamObserver;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineTransport;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteJsEngine;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.EvaluateRequest;
@@ -51,15 +51,15 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
  * contention between concurrent sessions. The stream closes after the response is received.
  * <p>
  * External callback handling (host functions, context property get/set) is delegated to
- * {@link ExternalCallbackHandler}, keeping this class focused on stream mechanics.
+ * {@link RemoteJsEngine} callback methods, keeping this class focused on stream mechanics.
  * <p>
  * Thread model:
  * <ul>
  *   <li>IS HTTP thread (Thread A) calls sendEvaluate()/sendExecuteCallback(), sends the initial
  *       request, then enters a message loop polling a BlockingQueue</li>
  *   <li>gRPC event thread receives StreamMessage via onNext() and enqueues to the BlockingQueue</li>
- *   <li>Thread A polls the queue, dispatches callbacks to {@link ExternalCallbackHandler} inline
- *       (same thread), and returns when a terminal response arrives</li>
+ *   <li>Thread A polls the queue, dispatches callbacks to {@link RemoteJsEngine} inline
+ *       (same thread), and sends the returned response on the stream</li>
  *   <li>All stream writes happen on Thread A — no concurrent writer contention</li>
  * </ul>
  */
@@ -77,7 +77,6 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
     private final int requestTimeout;
     private final GrpcConnectionManager connectionManager;
     private final String correlationId;
-    private final ExternalCallbackHandler callbackHandler = new ExternalCallbackHandler();
 
     public GrpcStreamingTransportImpl(String grpcTarget) {
         this(grpcTarget, 600);
@@ -88,7 +87,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
         this.requestTimeout = requestTimeout;
         this.connectionManager = GrpcConnectionManager.getInstance();
         this.correlationId = UUID.randomUUID().toString();
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] Created streaming transport for target: " + grpcTarget +
                     ", timeout: " + requestTimeout + "s, correlationId: " + correlationId);
         }
@@ -106,11 +105,11 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
     public EvaluateResponse sendEvaluate(EvaluateRequest request, RemoteJsEngine handler) throws IOException {
         String sessionId = request.getSessionId();
         long t0 = System.currentTimeMillis();
-        if (JsEngineFactory.isTracingEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
             System.out.println("[PERF] [" + t0 + "] IS EVALUATE_START session=" + sessionId +
                     " startTs=" + t0 + " scriptLen=" + request.getScript().length());
         }
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] sendEvaluate() - session: " + sessionId +
                     ", script length: " + request.getScript().length());
         }
@@ -125,7 +124,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
         StreamObserver<StreamMessage> outboundStream = stub.executeScript(
                 createResponseObserver(sessionId, messageQueue, streamError, t0));
         long t2 = System.currentTimeMillis();
-        if (JsEngineFactory.isTracingEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
             System.out.println("[PERF] [" + t2 + "] IS STREAM_OPENED session=" + sessionId +
                     " startTs=" + t0 + " stubReadyTs=" + t1 + " streamOpenedTs=" + t2 +
                     " openMs=" + (t2 - t1) + " sinceStartMs=" + (t2 - t0));
@@ -141,12 +140,12 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
             outboundStream.onNext(streamMsg);
         }
         long t3 = System.currentTimeMillis();
-        if (JsEngineFactory.isTracingEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
             System.out.println("[PERF] [" + t3 + "] IS EVALUATE_SENT session=" + sessionId +
                     " startTs=" + t0 + " streamOpenedTs=" + t2 + " sentTs=" + t3 +
                     " sendMs=" + (t3 - t2) + " sinceStartMs=" + (t3 - t0));
         }
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] Sent EvaluateRequest on stream, session: " + sessionId);
         }
 
@@ -157,13 +156,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
 
             EvaluateResponse response = terminalMsg.getEvaluateResponse();
             long t4 = System.currentTimeMillis();
-            if (JsEngineFactory.isTracingEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                 System.out.println("[PERF] [" + t4 + "] IS EVALUATE_RESPONSE session=" + sessionId +
                         " success=" + response.getSuccess() +
                         " startTs=" + t0 + " sentTs=" + t3 + " responseTs=" + t4 +
                         " waitMs=" + (t4 - t3) + " totalMs=" + (t4 - t0));
             }
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[GrpcStreaming] Received EvaluateResponse, session: " + sessionId +
                         ", success: " + response.getSuccess());
             }
@@ -171,13 +170,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
         } catch (IOException e) {
             long tErr = System.currentTimeMillis();
             if (e.getMessage() != null && e.getMessage().startsWith("Request timed out")) {
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[PERF] [" + tErr + "] IS EVALUATE_TIMEOUT session=" +
                             sessionId + " startTs=" + t0 + " sentTs=" + t3 +
                             " timeoutTs=" + tErr + " timeoutMs=" + (tErr - t0));
                 }
             } else {
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[PERF] [" + tErr + "] IS EVALUATE_ERROR session=" +
                             sessionId + " error=" + e.getMessage() +
                             " startTs=" + t0 + " errorTs=" + tErr + " totalMs=" + (tErr - t0));
@@ -189,7 +188,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
                 try {
                     outboundStream.onCompleted();
                 } catch (Exception e) {
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[GrpcStreaming] Error completing stream: " + e.getMessage());
                     }
                 }
@@ -208,11 +207,11 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
                                                        RemoteJsEngine handler) throws IOException {
         String sessionId = request.getSessionId();
         long t0 = System.currentTimeMillis();
-        if (JsEngineFactory.isTracingEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
             System.out.println("[PERF] [" + t0 + "] IS EXEC_CALLBACK_START session=" + sessionId +
                     " startTs=" + t0 + " fnLen=" + request.getFunctionSource().length());
         }
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] sendExecuteCallback() - session: " + sessionId +
                     ", function length: " + request.getFunctionSource().length());
         }
@@ -227,7 +226,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
         StreamObserver<StreamMessage> outboundStream = stub.executeScript(
                 createResponseObserver(sessionId, messageQueue, streamError, t0));
         long t2 = System.currentTimeMillis();
-        if (JsEngineFactory.isTracingEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
             System.out.println("[PERF] [" + t2 + "] IS EXEC_CALLBACK_STREAM_OPENED session=" + sessionId +
                     " startTs=" + t0 + " stubReadyTs=" + t1 + " streamOpenedTs=" + t2 +
                     " openMs=" + (t2 - t1) + " sinceStartMs=" + (t2 - t0));
@@ -243,12 +242,12 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
             outboundStream.onNext(streamMsg);
         }
         long t3 = System.currentTimeMillis();
-        if (JsEngineFactory.isTracingEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
             System.out.println("[PERF] [" + t3 + "] IS EXEC_CALLBACK_SENT session=" + sessionId +
                     " startTs=" + t0 + " streamOpenedTs=" + t2 + " sentTs=" + t3 +
                     " sendMs=" + (t3 - t2) + " sinceStartMs=" + (t3 - t0));
         }
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] Sent ExecuteCallbackRequest on stream, session: " + sessionId);
         }
 
@@ -259,13 +258,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
 
             ExecuteCallbackResponse response = terminalMsg.getExecuteCallbackResponse();
             long t4 = System.currentTimeMillis();
-            if (JsEngineFactory.isTracingEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                 System.out.println("[PERF] [" + t4 + "] IS EXEC_CALLBACK_RESPONSE session=" + sessionId +
                         " success=" + response.getSuccess() +
                         " startTs=" + t0 + " sentTs=" + t3 + " responseTs=" + t4 +
                         " waitMs=" + (t4 - t3) + " totalMs=" + (t4 - t0));
             }
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[GrpcStreaming] Received ExecuteCallbackResponse, session: " + sessionId +
                         ", success: " + response.getSuccess());
             }
@@ -273,13 +272,13 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
         } catch (IOException e) {
             long tErr = System.currentTimeMillis();
             if (e.getMessage() != null && e.getMessage().startsWith("Request timed out")) {
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[PERF] [" + tErr + "] IS EXEC_CALLBACK_TIMEOUT session=" +
                             sessionId + " startTs=" + t0 + " sentTs=" + t3 +
                             " timeoutTs=" + tErr + " timeoutMs=" + (tErr - t0));
                 }
             } else {
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[PERF] [" + tErr + "] IS EXEC_CALLBACK_ERROR session=" +
                             sessionId + " error=" + e.getMessage() +
                             " startTs=" + t0 + " errorTs=" + tErr + " totalMs=" + (tErr - t0));
@@ -291,7 +290,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
                 try {
                     outboundStream.onCompleted();
                 } catch (Exception e) {
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[GrpcStreaming] Error completing stream: " + e.getMessage());
                     }
                 }
@@ -301,12 +300,12 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
 
     @Override
     public void connect() throws IOException {
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] connect() to " + grpcTarget);
         }
         // Verify channel pool is initialized by requesting a channel
         connectionManager.getClientChannel(grpcTarget);
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] Connected successfully to: " + grpcTarget);
         }
     }
@@ -318,7 +317,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
 
     @Override
     public void close() throws IOException {
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[GrpcStreaming] close() called - singleton transport, channel pool remains active, " +
                     "correlationId: " + correlationId);
         }
@@ -329,7 +328,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
     // ============ Message Loop ============
 
     /**
-     * Polls the message queue, dispatches callback messages to {@link ExternalCallbackHandler} inline
+     * Polls the message queue, dispatches callback messages to {@link RemoteJsEngine} inline
      * on the calling thread (Thread A), and returns when a terminal response
      * (EvaluateResponse or ExecuteCallbackResponse) is received.
      * <p>
@@ -371,15 +370,21 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
             }
 
             if (msg == null) {
-                // poll() returned null — deadline elapsed
                 throw new IOException("Request timed out after " + requestTimeout + "s");
             }
 
             // Check for stream termination sentinel from onError()/onCompleted()
             if (msg == STREAM_TERMINATED_SENTINEL) {
+
                 Throwable err = streamError.get();
-                throw new IOException(
-                        err != null ? "Stream error: " + err.getMessage() : "Stream terminated unexpectedly", err);
+
+                if (err != null) {
+                    // real stream error
+                    throw new IOException("Stream error: " + err.getMessage(), err);
+                }
+
+                // stream ended but no terminal response seen
+                throw new IOException("Stream completed without response");
             }
 
             switch (msg.getPayloadCase()) {
@@ -389,31 +394,25 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
                     return msg;
 
                 case HOST_FUNCTION_REQUEST:
-                    callbackHandler.handleHostFunction(sessionId,
-                            msg.getHostFunctionRequest(), handler, outbound, streamLock);
+                    sendOnStream(outbound, streamLock,
+                            handler.handleHostFunctionCallback(sessionId, msg.getHostFunctionRequest()));
                     break;
 
                 case CONTEXT_PROPERTY_REQUEST:
-                    callbackHandler.handleContextProperty(sessionId,
-                            msg.getContextPropertyRequest(), handler, outbound, streamLock);
+                    sendOnStream(outbound, streamLock,
+                            handler.handleContextPropertyCallback(sessionId, msg.getContextPropertyRequest()));
                     break;
 
                 case CONTEXT_PROPERTY_SET_REQUEST:
-                    callbackHandler.handleContextPropertySet(sessionId,
-                            msg.getContextPropertySetRequest(), handler, outbound, streamLock);
+                    sendOnStream(outbound, streamLock,
+                            handler.handleContextPropertySetCallback(sessionId,
+                                    msg.getContextPropertySetRequest()));
                     break;
 
                 default:
                     log.warn("[GrpcStreaming] Unexpected message type in loop: " + msg.getPayloadCase());
             }
 
-            // NOTE: Do NOT check streamError here. If the External sent a terminal response
-            // followed by onCompleted() while Thread A was processing a callback, both the
-            // response and the SENTINEL are already in the queue. Checking streamError here
-            // would throw immediately without dequeuing the terminal response, causing a
-            // misleading "Stream completed without response" error. Instead, let the loop
-            // poll the queue — it will find either the terminal response (and return it) or
-            // the SENTINEL (and throw with the proper error context).
         }
     }
 
@@ -436,12 +435,12 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
             @Override
             public void onNext(StreamMessage message) {
                 long now = System.currentTimeMillis();
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[GrpcStreaming] Received message type: " + message.getPayloadCase() +
                             ", session: " + message.getSessionId());
                 }
 
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     switch (message.getPayloadCase()) {
                         case EVALUATE_RESPONSE:
                             System.out.println("[PERF] [" + now + "] IS EVALUATE_RESPONSE_ARRIVED session=" +
@@ -492,7 +491,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
             @Override
             public void onError(Throwable t) {
                 long errTs = System.currentTimeMillis();
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[PERF] [" + errTs + "] IS STREAM_ERROR session=" +
                             sessionId + " streamStartTs=" + streamStartTime +
                             " errorTs=" + errTs + " error=" + t.getMessage() +
@@ -506,28 +505,45 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
             @Override
             public void onCompleted() {
                 long completedTs = System.currentTimeMillis();
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[PERF] [" + completedTs + "] IS STREAM_COMPLETED session=" +
                             sessionId + " streamStartTs=" + streamStartTime +
                             " completedTs=" + completedTs +
                             " sinceStreamStartMs=" + (completedTs - streamStartTime));
                 }
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[GrpcStreaming] Stream completed, session: " + sessionId);
                 }
-                // If the message loop hasn't received a terminal response yet,
-                // this signals an abnormal completion.
-                streamError.compareAndSet(null, new IOException("Stream completed without response"));
+
                 messageQueue.offer(STREAM_TERMINATED_SENTINEL);
             }
         };
+    }
+
+    // ============ Stream Write Helper ============
+
+    /**
+     * Thread-safe send on the bidirectional stream.
+     *
+     * @param outbound The outbound stream observer.
+     * @param lock     The lock object for synchronized access.
+     * @param message  The message to send.
+     */
+    private void sendOnStream(StreamObserver<StreamMessage> outbound, Object lock, StreamMessage message) {
+
+        synchronized (lock) {
+            try {
+                outbound.onNext(message);
+            } catch (Exception e) {
+                log.error("[GrpcStreaming] Error sending on stream: " + e.getMessage(), e);
+            }
+        }
     }
 
     // ============ Channel Management ============
 
     /**
      * Get a stub for a round-robin selected channel from the pool.
-     * Stubs are lightweight wrappers, so creating one per-request is cheap.
      * This distributes streams across multiple TCP connections, avoiding
      * HTTP/2 flow control contention and head-of-line blocking.
      */

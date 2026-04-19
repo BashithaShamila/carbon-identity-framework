@@ -21,6 +21,7 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.StepConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsWrapperFactoryProvider;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext;
@@ -70,12 +71,12 @@ class ArgumentAdapter {
         Class<?>[] paramTypes = method.getParameterTypes();
         boolean isVarArgs = method.isVarArgs();
 
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] adaptArgumentsForMethod: paramCount=" + paramTypes.length +
                     ", argsCount=" + (args != null ? args.length : 0) + ", isVarArgs=" + isVarArgs);
         }
 
-        // For varargs methods, we need special handling.
+        // For varargs methods, need special handling.
         if (isVarArgs && args != null) {
             return adaptVarArgsMethod(method, paramTypes, args);
         }
@@ -91,7 +92,7 @@ class ArgumentAdapter {
             Object arg = args[i];
             Class<?> paramType = paramTypes[i];
 
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Adapting arg[" + i + "] from " +
                         (arg != null ? arg.getClass().getSimpleName() : "null") +
                         " to " + paramType.getSimpleName());
@@ -120,7 +121,7 @@ class ArgumentAdapter {
         int fixedParamCount = paramTypes.length - 1;
         Class<?> varArgType = paramTypes[fixedParamCount].getComponentType();
 
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Adapting varargs method: fixedParams=" + fixedParamCount +
                     ", varArgType=" + varArgType.getSimpleName() + ", totalArgs=" + args.length);
         }
@@ -129,7 +130,7 @@ class ArgumentAdapter {
 
         // Adapt fixed parameters.
         for (int i = 0; i < fixedParamCount && i < args.length; i++) {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Adapting fixed arg[" + i + "] from " +
                         (args[i] != null ? args[i].getClass().getSimpleName() : "null") +
                         " to " + paramTypes[i].getSimpleName());
@@ -137,22 +138,17 @@ class ArgumentAdapter {
             adaptedArgs[i] = adaptSingleArgument(args[i], paramTypes[i]);
         }
 
-        // Collect remaining arguments into varargs array, filtering out null values.
-        // Null values in varargs come from JavaScript undefined/null being serialized
-        // through the gRPC chain. In local mode, GraalJS handles these differently
-        // (e.g., not passing them as separate arguments). Filtering nulls ensures
-        // the varargs array matches what the method expects.
         List<Object> nonNullVarArgs = new ArrayList<>();
         for (int i = fixedParamCount; i < args.length; i++) {
             if (args[i] != null) {
                 Object adapted = adaptSingleArgument(args[i], varArgType);
                 nonNullVarArgs.add(adapted);
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Adapting vararg[" + (i - fixedParamCount) + "] from " +
                             args[i].getClass().getSimpleName() + " to " + varArgType.getSimpleName());
                 }
             } else {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Skipping null vararg at index " + i +
                             " (undefined/null from remote serialization)");
                 }
@@ -170,7 +166,7 @@ class ArgumentAdapter {
             adaptedArgs[fixedParamCount] = Array.newInstance(varArgType, 0);
         }
 
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Final varargs count: " + nonNullVarArgs.size() +
                     " (from " + (args.length - fixedParamCount) + " raw args)");
         }
@@ -186,9 +182,8 @@ class ArgumentAdapter {
             return null;
         }
 
-        // IMPORTANT: Check for context proxy marker from External.
-        // When the External sends a DynamicContextProxy as an argument, it serializes it
-        // as a Map
+        // Check for context proxy marker from External.
+        // When the External sends a DynamicContextProxy as an argument, it serializes it as a Map
         // with special marker fields. We need to reconstruct the actual object from
         // stored authContext.
         if (arg instanceof Map) {
@@ -196,20 +191,24 @@ class ArgumentAdapter {
             if (Boolean.TRUE.equals(map.get(RemoteEngineConstants.IS_CONTEXT_PROXY))) {
                 String proxyType = (String) map.get(RemoteEngineConstants.PROXY_TYPE_FIELD);
                 String basePath = (String) map.get(RemoteEngineConstants.BASE_PATH_FIELD);
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Received context proxy marker: type=" + proxyType +
                             ", basePath=" + basePath);
                 }
 
                 // Reconstruct the actual object based on proxyType and basePath
-                Object reconstructed = reconstructFromContextProxy(proxyType, basePath, paramType);
-                if (reconstructed != null) {
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                        log.debug("[RemoteJsEngine] Reconstructed " + reconstructed.getClass().getSimpleName() +
-                                " from context proxy marker");
-                    }
-                    return reconstructed;
+                Object reconstructed = reconstructFromProxy(proxyType, basePath, paramType);
+                if (reconstructed == null) {
+                    throw new IllegalStateException(
+                            "Failed to reconstruct context proxy: type=" + proxyType +
+                                    ", basePath=" + basePath
+                    );
                 }
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+                    log.debug("[RemoteJsEngine] Reconstructed " + reconstructed.getClass().getSimpleName() +
+                            " from context proxy marker");
+                }
+                return reconstructed;
             }
         }
 
@@ -217,7 +216,7 @@ class ArgumentAdapter {
         // JsAuthenticationContext is the abstract base; JsGraalAuthenticationContext extends it.
         // All host function methods declare the parameter as the base type.
         if (JsAuthenticationContext.class.isAssignableFrom(paramType)) {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Reconstructed JsGraalAuthenticationContext from stored authContext");
             }
             return new JsGraalAuthenticationContext(authContext);
@@ -296,7 +295,7 @@ class ArgumentAdapter {
         if (paramType == Object.class) {
             if (arg instanceof Map) {
                 Map<String, Object> mapArg = (Map<String, Object>) arg;
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Coercing number types in Map with " + mapArg.size() + " entries");
                 }
                 return coerceMapNumberTypes(mapArg);
@@ -325,7 +324,7 @@ class ArgumentAdapter {
                     // Whole number — convert to Integer (or Long if out of int range)
                     if (d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
                         entry.setValue((int) d);
-                        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                             log.debug("[RemoteJsEngine] Coerced " + entry.getKey() + ": " + d + " -> " + (int) d);
                         }
                     } else {
@@ -351,11 +350,11 @@ class ArgumentAdapter {
      * @param paramType The expected parameter type from the method signature
      * @return The reconstructed object, or null if reconstruction fails
      */
-    Object reconstructFromContextProxy(String proxyType, String basePath, Class<?> paramType) {
+    Object reconstructFromProxy(String proxyType, String basePath, Class<?> paramType) {
 
         // If basePath is empty or null, return the full context
         if (basePath == null || basePath.isEmpty()) {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Reconstructing root context");
             }
             return new JsGraalAuthenticationContext(authContext);
@@ -369,7 +368,7 @@ class ArgumentAdapter {
         if ("authenticateduser".equals(proxyType) && isStepSubjectPath(basePath)) {
             String[] parts = basePath.split(RemoteEngineConstants.PATH_SEPARATOR);
             int stepNum = Integer.parseInt(parts[1]);
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Direct reconstruction of authenticateduser for step " + stepNum);
             }
 
@@ -393,7 +392,7 @@ class ArgumentAdapter {
                     if (idPData != null && idPData.getUser() != null) {
                         Object result = JsWrapperFactoryProvider.getInstance().getWrapperFactory()
                                 .createJsAuthenticatedUser(authContext, idPData.getUser(), stepNum, authenticatedIdp);
-                        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                             log.debug("[RemoteJsEngine] Directly reconstructed " +
                                     result.getClass().getSimpleName() + " for step " + stepNum);
                         }
@@ -410,7 +409,7 @@ class ArgumentAdapter {
         // Generic proxy navigation fallback for other proxy types/paths.
         // Delegates to PropertyPathNavigator which handles ProxyObject, ProxyArray,
         // Map, and reflection getter traversal (including the OSGi classloader fallback).
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Navigating to nested property: " + basePath);
         }
 
@@ -419,15 +418,16 @@ class ArgumentAdapter {
             Object root = new JsGraalAuthenticationContext(authContext);
             Object result = PropertyPathNavigator.navigatePath(pathParts, 0, root);
 
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Successfully navigated to: " + basePath +
                         ", result type: " + (result != null ? result.getClass().getSimpleName() : "null"));
             }
             return result;
 
         } catch (Exception e) {
-            log.error("[RemoteJsEngine] Error navigating to property '" + basePath + "': " + e.getMessage(), e);
-            return null;
+            throw new IllegalStateException(
+                    "Failed to reconstruct proxy for path: " + basePath, e
+            );
         }
     }
 

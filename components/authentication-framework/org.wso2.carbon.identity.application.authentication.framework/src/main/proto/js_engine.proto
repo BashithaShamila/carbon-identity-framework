@@ -72,7 +72,7 @@ message HostFunctionDefinition {
 
 message ContextPropertyRequest {
     string session_id = 1;
-    string property_path = 2;  // e.g., "request", "request.params", "steps.1"
+    string property_path = 2;  // "request", "request.params", "steps.1"
     string proxy_type = 3;     // Type of proxy: "context", "request", "steps", etc.
 }
 

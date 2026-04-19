@@ -18,12 +18,13 @@
 
 package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote;
 
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 
 /**
  * OSGi service interface for resolving the script engine execution mode in HYBRID mode.
  * <p>
- * When the engine mode is set to HYBRID, the {@link JsEngineFactory} delegates to an
+ * When the engine mode is set to HYBRID, the {@link JsGraalGraphEngineModeRouter} delegates to an
  * implementation of this interface to determine whether a given authentication request
  * should use the LOCAL (in-JVM GraalJS) or REMOTE (External via gRPC) engine.
  * <p>
@@ -36,7 +37,7 @@ public interface ScriptEngineModeResolver {
      * Resolve the execution mode for a given authentication context.
      *
      * @param authenticationContext The authentication context for the current request.
-     * @return The resolved {@link JsEngineFactory.ExecutionMode} (LOCAL or REMOTE).
+     * @return The resolved {@link JsGraalGraphEngineModeRouter.ExecutionMode} (LOCAL or REMOTE).
      */
-    JsEngineFactory.ExecutionMode resolve(AuthenticationContext authenticationContext);
+    JsGraalGraphEngineModeRouter.ExecutionMode resolve(AuthenticationContext authenticationContext);
 }

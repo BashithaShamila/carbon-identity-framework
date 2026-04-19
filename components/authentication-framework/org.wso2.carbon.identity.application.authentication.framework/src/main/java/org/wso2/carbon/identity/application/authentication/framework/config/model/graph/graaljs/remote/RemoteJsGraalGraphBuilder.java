@@ -40,6 +40,8 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.StepConfigGraphNode;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.GraalSerializableJsFunction;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.GraalSerializer;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server.GrpcTransportProvider;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
 
@@ -114,10 +116,6 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
-    // =============================================================================================
-    // Script evaluation — initial and callback paths
-    // =============================================================================================
-
     /**
      * Creates the graph with the given Script using remote External execution.
      * This method sends the script to the External sidecar for evaluation and processes
@@ -130,11 +128,14 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
     @SuppressWarnings("unchecked")
     public RemoteJsGraalGraphBuilder createWith(String script) {
 
-        try (JsEngine jsEngine = JsEngineFactory.getInstance().createEngine(authenticationContext)) {
+        try (JsEngine jsEngine =
+                     new RemoteJsEngine(
+                             GrpcTransportProvider.getTransport(JsGraalGraphEngineModeRouter.getGrpcTarget()),
+                             authenticationContext)) {
             currentBuilder.set(this);
             contextForJs.set(authenticationContext);
 
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[createWithRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
                         ", contextId: " + authenticationContext.getContextIdentifier());
             }
@@ -153,7 +154,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                         JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER));
             }
             jsEngine.registerHostFunctions(hostFunctions);
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[createWithRemote] Registered " + hostFunctions.size() + " host functions: " +
                         hostFunctions.keySet());
             }
@@ -167,7 +168,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                     "\n" +
                     JS_FUNC_ON_LOGIN_REQUEST + "(context);";
 
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[createWithRemote] Sending script (length: " + completeScript.length() +
                         ") to External for evaluation");
             }
@@ -192,14 +193,14 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                     return this;
                 }
 
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[createWithRemote] Script evaluation successful, elapsed: " +
                             evalResult.getElapsedMs() + "ms");
                 }
 
                 // Update bindings from External response.
                 if (evalResult.getUpdatedBindings() != null) {
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[createWithRemote] Updating bindings from External: " +
                                 evalResult.getUpdatedBindings().keySet());
                     }
@@ -226,7 +227,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                             storeAuthScriptExecutionMonitorData(authenticationContext,
                             scriptExecutionData));
 
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[createWithRemote] Script execution completed for SP: " +
                         authenticationContext.getServiceProviderName());
             }
@@ -235,7 +236,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
             // Note: With remote execution, we persist the updated bindings from External.
             Map<String, Object> persistableBindings = jsEngine.getBindings();
             authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", persistableBindings);
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[createWithRemote] Persisted " + persistableBindings.size() + " bindings");
             }
 
@@ -320,7 +321,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
         AuthenticationContext context = contextForJs.get();
         AuthGraphNode currentNode = dynamicallyBuiltBaseNode.get();
 
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("Execute Step on async event. Step ID : " + stepId);
         }
         AuthenticationGraph graph = context.getSequenceConfig().getAuthenticationGraph();
@@ -331,7 +332,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
 
         StepConfig stepConfig = graph.getStepMap().get(stepId);
         if (stepConfig == null) {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.error("The stepConfig of the step ID : " + stepId + " is null");
             }
             return;
@@ -347,12 +348,12 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                     .orElse(null);
         }
         clonedStepConfig.applyStateChangesToNewObjectFromContextStepMap(stepConfigFromContext);
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("Found step for the Step ID : " + stepId + ", Step Config " + clonedStepConfig);
         }
         StepConfigGraphNode newNode = wrap(clonedStepConfig);
         if (currentNode == null) {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("Setting a new node at the first time. Node : " + newNode.getName());
             }
             dynamicallyBuiltBaseNode.set(newNode);
@@ -575,7 +576,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
         if (authenticationOptionsObj instanceof Map) {
             filterOptions((Map<String, Map<String, String>>) authenticationOptionsObj, stepConfig);
         } else {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("Authenticator options not provided or invalid, hence proceeding without filtering");
             }
         }
@@ -584,7 +585,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
         if (authenticatorParams instanceof Map) {
             authenticatorParamsOptions((Map<String, Object>) authenticatorParams, stepConfig);
         } else {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("Authenticator params not provided or invalid, hence proceeding without setting params");
             }
         }
@@ -593,7 +594,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
         if (stepOptions instanceof Map) {
             handleStepOptions(stepConfig, (Map<String, String>) stepOptions, stepConfigMap);
         } else {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("Step options not provided or invalid, hence proceeding without handling");
             }
         }
@@ -819,12 +820,15 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                 return jsFunction.getSource();
             }
 
-            try (JsEngine jsEngine = JsEngineFactory.getInstance().createEngine(authenticationContext)) {
+            try (JsEngine jsEngine =
+                         new RemoteJsEngine(
+                            GrpcTransportProvider.getTransport(JsGraalGraphEngineModeRouter.getGrpcTarget()),
+                            authenticationContext)){
                 currentBuilder.set(graphBuilder);
                 contextForJs.set(authenticationContext);
 
                 // Log context info for debugging.
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[evaluateRemote] Starting for SP: " + authenticationContext.getServiceProviderName() +
                             ", contextId: " + authenticationContext.getContextIdentifier() +
                             ", step: " + authenticationContext.getCurrentStep() +
@@ -836,13 +840,13 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                 Map<String, Object> persistedBindings = (Map<String, Object>) authenticationContext
                         .getProperty("JS_BINDING_CURRENT_CONTEXT");
                 if (persistedBindings != null) {
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[evaluateRemote] Found " + persistedBindings.size() +
                                 " persisted bindings: " + persistedBindings.keySet());
                     }
                     // Log each binding value for debugging.
                     for (Map.Entry<String, Object> entry : persistedBindings.entrySet()) {
-                        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                             log.debug("[evaluateRemote] Binding: " + entry.getKey() + " = " +
                                     (entry.getValue() != null
                                             ? entry.getValue().getClass().getSimpleName() + ": " + entry.getValue()
@@ -850,7 +854,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                         }
                     }
                 } else {
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[evaluateRemote] No persisted bindings found in authContext. " +
                                 "Property keys: " + authenticationContext.getProperties().keySet());
                     }
@@ -902,12 +906,12 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                         // (e.g., dynamicFlag set in step 1 callback is available in step 2)
                         Map<String, Object> updatedBindings = jsEngine.getBindings();
                         authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", updatedBindings);
-                        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                             log.debug("[evaluateRemote] Re-persisted " + updatedBindings.size() +
                                     " bindings after callback");
                         }
 
-                        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                             log.debug("Remote JS execution succeeded for SP: " +
                                     authenticationContext.getServiceProviderName() +
                                     ", elapsed: " + evalResult.getElapsedMs() + "ms");

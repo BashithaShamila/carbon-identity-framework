@@ -29,7 +29,6 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsBaseGraphBuilder;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericGraphBuilderFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericSerializer;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteJsGraalGraphBuilder;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.AbstractJSObjectWrapper;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticatedUser;
@@ -64,26 +63,26 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
     private static final Log LOG = LogFactory.getLog(JsGraalGraphBuilderFactory.class);
     private static final String JS_BINDING_CURRENT_CONTEXT = "JS_BINDING_CURRENT_CONTEXT";
     private int javascriptResourceLimit = 0;
-    private JsEngineFactory jsEngineFactory;
+    private JsGraalGraphEngineModeRouter jsEngineRouter;
 
     public void init() {
 
         setJavascriptResourceLimit();
-        initializeEngineFactory();
+        initializeEngineRouter();
     }
 
     /**
      * Initialize the JS engine factory and callback server.
      * This sets up the infrastructure for remote JS execution if enabled.
      */
-    private void initializeEngineFactory() {
-        // Initialize the JsEngineFactory with our statement limit
-        jsEngineFactory = JsEngineFactory.getInstance();
-        jsEngineFactory.setStatementLimit(javascriptResourceLimit);
+    private void initializeEngineRouter() {
+        // Initialize the JsGraalGraphEngineModeRouter with our statement limit
+        jsEngineRouter = JsGraalGraphEngineModeRouter.getInstance();
+        jsEngineRouter.setStatementLimit(javascriptResourceLimit);
 
         // Log startup mode. Note: in HYBRID mode, actual routing is per-request via OSGi resolver.
         LOG.info("GraalJS engine abstraction initialized. Engine mode: " +
-                jsEngineFactory.getEngineMode());
+                jsEngineRouter.getEngineMode());
     }
 
     @SuppressWarnings("unchecked")
@@ -222,10 +221,7 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
      */
     private boolean needsLocalContext(AuthenticationContext authenticationContext) {
 
-        if (jsEngineFactory == null) {
-            return true;
-        }
-        return jsEngineFactory.resolveMode(authenticationContext) != JsEngineFactory.ExecutionMode.REMOTE;
+        return jsEngineRouter.resolveMode(authenticationContext) != JsGraalGraphEngineModeRouter.ExecutionMode.REMOTE;
     }
 
     private void setJavascriptResourceLimit() {

@@ -20,19 +20,31 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.graalvm.polyglot.proxy.ProxyObject;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextData;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertyRequest;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertyResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertySetRequest;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertySetResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.EvaluateRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.EvaluateResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ExecuteCallbackRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ExecuteCallbackResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.HostFunctionDefinition;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.HostFunctionRequest;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.HostFunctionResponse;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.SerializedProxyObject;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.SerializedValue;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.StreamMessage;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,7 +67,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * </ul>
  * <p>
  * Thread model: With the same-thread callback architecture, host function invocations
- * (invokeHostFunction) run on the IS HTTP thread (Thread A) which already has the correct
+ * (handleHostFunctionCallback) run on the IS HTTP thread (Thread A) which already has the correct
  * ThreadLocal context (contextForJs, dynamicallyBuiltBaseNode, currentBuilder, CarbonContext).
  * No thread-local setup/teardown is needed.
  */
@@ -67,10 +79,6 @@ public class RemoteJsEngine implements JsEngine {
     private final String sessionId;
     private final AuthenticationContext authContext;
 
-    // CRITICAL FIX: Use ConcurrentHashMap to prevent race conditions during
-    // concurrent access
-    // from multiple threads (e.g., main execution thread + callback handler
-    // threads)
     private final Map<String, Object> bindings = new ConcurrentHashMap<>();
     private final Map<String, Object> hostFunctions = new ConcurrentHashMap<>();
 
@@ -94,7 +102,7 @@ public class RemoteJsEngine implements JsEngine {
         this.argumentAdapter = new ArgumentAdapter(authContext);
         this.proxyReferenceCache = new ProxyReferenceCache();
         this.hostFunctionRegistry = new HostFunctionRegistry();
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] Created with session: " + sessionId +
                     ", transport: " + transport.getClass().getSimpleName() +
                     ", SP: " + (authContext != null ? authContext.getServiceProviderName() : "null"));
@@ -104,17 +112,17 @@ public class RemoteJsEngine implements JsEngine {
     @Override
     public EvaluationResult evaluate(String script, String sourceIdentifier, Map<String, Object> initialBindings) {
         long startTime = System.currentTimeMillis();
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] evaluate() called, session: " + sessionId + ", sourceId: " + sourceIdentifier);
         }
 
         try {
             // Phase 1: Connect and setup
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Ensuring connection to remote engine");
             }
             ensureConnected();
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Connection established");
             }
             long tConnectDone = System.currentTimeMillis();
@@ -132,7 +140,7 @@ public class RemoteJsEngine implements JsEngine {
                     .setSourceIdentifier(sourceIdentifier != null ? sourceIdentifier : "script");
 
             // Serialize bindings
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Serializing " + bindings.size() + " bindings, " +
                         hostFunctions.size() + " host functions");
             }
@@ -149,7 +157,7 @@ public class RemoteJsEngine implements JsEngine {
 
             // Add host function definitions so External knows to call back
             for (String funcName : hostFunctions.keySet()) {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Registering host function: " + funcName);
                 }
                 requestBuilder.addHostFunctions(
@@ -160,7 +168,7 @@ public class RemoteJsEngine implements JsEngine {
 
             // Add context data for context proxy reconstruction in External
             if (authContext != null) {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Adding context data, step: " + authContext.getCurrentStep() +
                             ", subject: "
                             + (authContext.getSubject() != null ? authContext.getSubject().getUserName() : "null"));
@@ -185,12 +193,12 @@ public class RemoteJsEngine implements JsEngine {
             long tRequestBuilt = System.currentTimeMillis();
 
             // Phase 3: Transport round-trip
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Sending evaluate request to remote engine...");
             }
             EvaluateResponse response = transport.sendEvaluate(requestBuilder.build(), this);
             long tResponseReceived = System.currentTimeMillis();
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Received response, success: " + response.getSuccess());
             }
 
@@ -209,7 +217,7 @@ public class RemoteJsEngine implements JsEngine {
                 long tResponseProcessed = System.currentTimeMillis();
 
                 long isElapsed = tResponseProcessed - startTime;
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
                             "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
@@ -227,7 +235,7 @@ public class RemoteJsEngine implements JsEngine {
             } else {
                 long tResponseProcessed = System.currentTimeMillis();
                 long isElapsed = tResponseProcessed - startTime;
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
                             "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
@@ -253,7 +261,7 @@ public class RemoteJsEngine implements JsEngine {
     public EvaluationResult executeCallback(String functionSource, Object[] arguments,
             Map<String, Object> callbackBindings, AuthenticationContext context) {
         long startTime = System.currentTimeMillis();
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] executeCallback() called, session: " + sessionId +
                     ", function length: " + (functionSource != null ? functionSource.length() : 0) +
                     ", args: " + (arguments != null ? arguments.length : 0));
@@ -261,11 +269,11 @@ public class RemoteJsEngine implements JsEngine {
 
         try {
             // Phase 1: Connect and setup
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] executeCallback - ensuring connection to remote engine");
             }
             ensureConnected();
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] executeCallback - connection established");
             }
             long tConnectDone = System.currentTimeMillis();
@@ -273,20 +281,20 @@ public class RemoteJsEngine implements JsEngine {
             // Phase 2: Build request (protobuf serialization)
             // Apply callback bindings
             if (callbackBindings != null && !callbackBindings.isEmpty()) {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Applying " + callbackBindings.size() + " callback bindings: " +
                             callbackBindings.keySet());
                 }
                 for (Map.Entry<String, Object> entry : callbackBindings.entrySet()) {
                     Object value = entry.getValue();
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[RemoteJsEngine] Callback binding: " + entry.getKey() + " = " +
                                 (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
                     }
                     bindings.put(entry.getKey(), value);
                 }
             } else {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] No callback bindings provided (null or empty). " +
                             "callbackBindings=" + callbackBindings);
                 }
@@ -299,7 +307,7 @@ public class RemoteJsEngine implements JsEngine {
 
             // Add context data for proxy object reconstruction
             if (context != null) {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Adding context data, step: " + context.getCurrentStep() +
                             ", subject: " + (context.getSubject() != null ? context.getSubject().getUserName() : "null"));
                 }
@@ -321,11 +329,11 @@ public class RemoteJsEngine implements JsEngine {
 
             // Serialize arguments
             if (arguments != null) {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Serializing " + arguments.length + " arguments");
                 }
                 for (int i = 0; i < arguments.length; i++) {
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[RemoteJsEngine] Arg[" + i + "] type: " +
                                 (arguments[i] != null ? arguments[i].getClass().getName() : "null"));
                     }
@@ -346,11 +354,11 @@ public class RemoteJsEngine implements JsEngine {
             }
 
             // Serialize bindings (excluding host functions)
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Total bindings to serialize: " + bindings.size() +
                         ", keys: " + bindings.keySet());
             }
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Host functions (excluded from bindings): " + hostFunctions.keySet());
             }
             int bindingsAdded = 0;
@@ -362,7 +370,7 @@ public class RemoteJsEngine implements JsEngine {
                 // toProto() conversion for JsGraalAuthenticationContext first.
                 if (!RemoteEngineConstants.CONTEXT_BINDING_KEY.equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
                     Object value = entry.getValue();
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[RemoteJsEngine] Serializing binding: " + entry.getKey() + " = " +
                                 (value != null ? value.getClass().getSimpleName() + ": " + value : "null"));
                     }
@@ -370,16 +378,16 @@ public class RemoteJsEngine implements JsEngine {
                     bindingsAdded++;
                 }
             }
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Bindings serialized: " + bindingsAdded);
             }
 
             // Add host function definitions so External knows to create stubs for callbacks
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Adding " + hostFunctions.size() + " host function definitions");
             }
             for (String funcName : hostFunctions.keySet()) {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Adding host function: " + funcName);
                 }
                 requestBuilder.addHostFunctions(
@@ -390,7 +398,7 @@ public class RemoteJsEngine implements JsEngine {
             long tRequestBuilt = System.currentTimeMillis();
 
             // Phase 3: Transport round-trip
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Sending executeCallback request to remote engine...");
             }
             ExecuteCallbackResponse response = transport.sendExecuteCallback(requestBuilder.build(), this);
@@ -411,7 +419,7 @@ public class RemoteJsEngine implements JsEngine {
                 long tResponseProcessed = System.currentTimeMillis();
 
                 long isElapsed = tResponseProcessed - startTime;
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Phase timing: connectSetup=" + (tConnectDone - startTime) +
                             "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
@@ -429,7 +437,7 @@ public class RemoteJsEngine implements JsEngine {
             } else {
                 long tResponseProcessed = System.currentTimeMillis();
                 long isElapsed = tResponseProcessed - startTime;
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[RemoteJsEngine] Phase timing (error): connectSetup=" + (tConnectDone - startTime) +
                             "ms, requestBuild=" + (tRequestBuilt - tConnectDone) +
                             "ms, transportRoundTrip=" + (tResponseReceived - tRequestBuilt) +
@@ -482,136 +490,362 @@ public class RemoteJsEngine implements JsEngine {
             try {
                 transport.close();
             } catch (IOException e) {
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("Error closing transport", e);
                 }
             }
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("RemoteJsEngine closed for session: " + sessionId);
             }
         }
     }
 
     // ======================== Callback Handling ========================
+    // These methods handle External callback requests inline on the IS HTTP thread.
+    // Each method: deserializes the request, executes the operation, serializes the response,
+    // and returns a StreamMessage. The caller (transport layer) writes it to the gRPC stream.
 
     /**
-     * Handle host function callback from External.
-     * This is called when the External JavaScript invokes a host function.
-     * Dispatches via pre-computed HostFunctionRegistry for O(1) lookup.
+     * Handle a host function callback request from the External.
+     * Deserializes arguments, invokes the host function via the registry,
+     * serializes the result, and returns the response as a StreamMessage.
+     * <p>
+     * CRITICAL: Preserves the proxy cache ThreadLocal set-before/clear-after pattern
+     * for lazy-loading complex objects (e.g., User arrays).
+     *
+     * @param callbackSessionId The session identifier for the stream message.
+     * @param request           The host function request from the External.
+     * @return StreamMessage containing the HostFunctionResponse.
      */
-    public Object invokeHostFunction(String functionName, Object... args) throws Exception {
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-            log.debug("[RemoteJsEngine] invokeHostFunction called: " + functionName + " with " +
-                    (args != null ? args.length : 0) + " args, session: " + sessionId);
+    public StreamMessage handleHostFunctionCallback(String callbackSessionId, HostFunctionRequest request) {
+
+        String functionName = request.getFunctionName();
+        long hfStart = System.currentTimeMillis();
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
+            System.out.println("[PERF] [" + hfStart + "] IS HOST_FN_HANDLE_START session=" + callbackSessionId +
+                    " fn=" + functionName + " handleStartTs=" + hfStart);
+        }
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] handleHostFunction: " + functionName + ", session: " + callbackSessionId);
         }
 
-        // Log raw argument details for debugging.
-        if (args != null) {
-            boolean shouldLog = JsEngineFactory.isTracingEnabled() && log.isDebugEnabled();
+        try {
+            // Deserialize arguments
+            List<Object> args = new ArrayList<>();
+            for (SerializedValue sv : request.getArgumentsList()) {
+                args.add(Serializer.fromProto(sv));
+            }
 
-            if (shouldLog) {
-                for (int i = 0; i < args.length; i++) {
+            // Invoke host function via registry dispatch
+            long hfExecStart = System.currentTimeMillis();
+            Object[] argsArray = args.toArray();
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Invoking host function: " + functionName + " with " +
+                        argsArray.length + " args, session: " + sessionId);
+                for (int i = 0; i < argsArray.length; i++) {
                     log.debug("[RemoteJsEngine] Raw arg[" + i + "]: type=" +
-                            (args[i] != null ? args[i].getClass().getName() : "null") +
-                            ", value=" + (args[i] != null ? truncateForLog(args[i].toString()) : "null"));
+                            (argsArray[i] != null ? argsArray[i].getClass().getName() : "null") +
+                            ", value=" + (argsArray[i] != null ? truncateForLog(argsArray[i].toString()) : "null"));
                 }
             }
+            Object result = hostFunctionRegistry.invoke(functionName, argumentAdapter, argsArray);
+            long hfExecEnd = System.currentTimeMillis();
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
+                System.out.println("[PERF] [" + hfExecEnd + "] IS HOST_FN_EXECUTED session=" + callbackSessionId +
+                        " fn=" + functionName +
+                        " handleStartTs=" + hfStart + " deserEndTs=" + hfExecStart +
+                        " execStartTs=" + hfExecStart + " execEndTs=" + hfExecEnd +
+                        " deserMs=" + (hfExecStart - hfStart) +
+                        " execMs=" + (hfExecEnd - hfExecStart) +
+                        " totalMs=" + (hfExecEnd - hfStart));
+            }
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+                log.debug("[GrpcStreaming] Host function " + functionName + " returned: " +
+                        (result != null ? result.getClass().getSimpleName() : "null"));
+            }
+
+            // Serialize result: use proxy object for complex types, primitive serialization otherwise
+            SerializedValue serializedResult;
+            if (result != null && ProxyTypeResolver.isJsWrapperProxy(result)) {
+                String refId = proxyReferenceCache.storeObjectReference(result);
+                String proxyType = ProxyTypeResolver.getJsWrapperProxyType(result);
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+                    log.debug("[GrpcStreaming] Serializing complex result as proxy: type=" + proxyType +
+                            ", refId=" + refId);
+                }
+                serializedResult = SerializedValue.newBuilder()
+                        .setProxyObject(SerializedProxyObject.newBuilder()
+                                .setType(proxyType)
+                                .setReferenceId(refId != null ? refId : "")
+                                .build())
+                        .build();
+            } else {
+                // CRITICAL: Set proxy cache ThreadLocal before serialization.
+                // This enables lazy-loading proxy pattern for complex objects (e.g., User arrays).
+                Map<String, Object> proxyCache = proxyReferenceCache.getCache();
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
+                    System.out.println("[GrpcStreaming] Setting proxy cache ThreadLocal - cache size: " +
+                            (proxyCache != null ? proxyCache.size() : "NULL"));
+                }
+                Serializer.setSessionProxyCache(proxyCache);
+                try {
+                    serializedResult = Serializer.toProto(result);
+                } finally {
+                    Serializer.clearSessionProxyCache();
+                }
+            }
+
+            long hfSerEnd = System.currentTimeMillis();
+            StreamMessage response = StreamMessage.newBuilder()
+                    .setSessionId(callbackSessionId)
+                    .setHostFunctionResponse(HostFunctionResponse.newBuilder()
+                            .setSuccess(true)
+                            .setResult(serializedResult)
+                            .build())
+                    .build();
+            long hfSentTs = System.currentTimeMillis();
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
+                System.out.println("[PERF] [" + hfSentTs + "] IS HOST_FN_RESPONSE_BUILT session=" +
+                        callbackSessionId + " fn=" + functionName +
+                        " handleStartTs=" + hfStart + " execEndTs=" + hfExecEnd +
+                        " serEndTs=" + hfSerEnd + " builtTs=" + hfSentTs +
+                        " serMs=" + (hfSerEnd - hfExecEnd) + " buildMs=" + (hfSentTs - hfSerEnd) +
+                        " totalHandleMs=" + (hfSentTs - hfStart));
+            }
+            return response;
+
+        } catch (Exception e) {
+            log.error("[GrpcStreaming] Error in host function " + functionName, e);
+            return StreamMessage.newBuilder()
+                    .setSessionId(callbackSessionId)
+                    .setHostFunctionResponse(HostFunctionResponse.newBuilder()
+                            .setSuccess(false)
+                            .setErrorMessage(formatErrorForWire(e))
+                            .build())
+                    .build();
         }
-
-        return hostFunctionRegistry.invoke(functionName, argumentAdapter, args);
-    }
-
-    public String storeObjectReference(Object obj) {
-        return proxyReferenceCache.storeObjectReference(obj);
-    }
-
-    /**
-     * Get a context property value for the dynamic context proxy.
-     * This navigates the property path on the real JsGraalAuthenticationContext.
-     * Also supports host function return references via "__hostref__" prefix.
-     */
-    public Object getContextProperty(String propertyPath) throws Exception {
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-            log.debug("[RemoteJsEngine] getContextProperty called: " + propertyPath + ", session: " + sessionId);
-        }
-
-        // Handle proxy object property access: "__proxyref__::<referenceId>::<property>"
-        // This enables lazy loading of complex objects (e.g., User objects from getUsersWithClaimValues)
-        if (propertyPath.startsWith(RemoteEngineConstants.PROXY_REF_PREFIX)) {
-            return proxyReferenceCache.getProxyObjectProperty(
-                    propertyPath.substring(RemoteEngineConstants.PROXY_REF_PREFIX.length()));
-        }
-
-        // Handle host function return references: "__hostref__::<refId>::<property>"
-        if (propertyPath.startsWith(RemoteEngineConstants.HOST_REF_PREFIX)) {
-            return proxyReferenceCache.getHostRefProperty(
-                    propertyPath.substring(RemoteEngineConstants.HOST_REF_PREFIX.length()));
-        }
-
-        if (authContext == null) {
-            log.warn("[RemoteJsEngine] No authContext available for property access");
-            return null;
-        }
-
-        // Create the JsGraalAuthenticationContext wrapper and navigate the property path
-        JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
-        String[] parts = propertyPath.split(RemoteEngineConstants.PATH_SEPARATOR);
-        Object result = PropertyPathNavigator.navigatePath(parts, 0, jsContext);
-
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-            log.debug("[RemoteJsEngine] getContextProperty '" + propertyPath + "' = " +
-                    (result != null ? result.getClass().getSimpleName() : "null"));
-        }
-        return result;
-    }
-
-    /**
-     * Set a context property value (write-back from External).
-     * This navigates the property path and sets the value on the target object.
-     * Supports paths like:
-     * "steps::1::subject::claims::http://wso2.org/claims/email"
-     * Also supports host function return references via "__hostref__" prefix and
-     * proxy object references via "__proxyref__" prefix.
-     */
-    public boolean setContextProperty(String propertyPath, Object value) throws Exception {
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-            log.debug("[RemoteJsEngine] setContextProperty called: " + propertyPath + " = " +
-                    (value != null ? value.getClass().getSimpleName() : "null") + ", session: " + sessionId);
-        }
-
-        // Handle proxy object references (list elements from host function returns).
-        if (propertyPath.startsWith(RemoteEngineConstants.PROXY_REF_PREFIX)) {
-            return proxyReferenceCache.setProxyObjectProperty(
-                    propertyPath.substring(RemoteEngineConstants.PROXY_REF_PREFIX.length()), value);
-        }
-
-        // Handle host function return references.
-        if (propertyPath.startsWith(RemoteEngineConstants.HOST_REF_PREFIX)) {
-            return proxyReferenceCache.setHostRefProperty(
-                    propertyPath.substring(RemoteEngineConstants.HOST_REF_PREFIX.length()), value);
-        }
-
-        if (authContext == null) {
-            log.warn("[RemoteJsEngine] No authContext available for property write");
-            return false;
-        }
-
-        // Navigate to the parent object and set the final property via PropertyPathNavigator
-        String[] parts = propertyPath.split(RemoteEngineConstants.PATH_SEPARATOR);
-        if (parts.length == 0) {
-            return false;
-        }
-
-        JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
-        return PropertyPathNavigator.setProperty(parts, 0, jsContext, value);
     }
 
     /**
-     * Get the proxy object cache for this session.
-     * Used by ExternalCallbackHandler to set the ThreadLocal before serialization.
+     * Handle a context property read callback request from the External.
+     * Resolves the property path, determines if the value is a proxy type,
+     * and returns the appropriate response (proxy metadata with member keys, or serialized value).
+     * <p>
+     * Handles the special {@code __keys__} path for member key enumeration.
+     *
+     * @param callbackSessionId The session identifier for the stream message.
+     * @param request           The context property request from the External.
+     * @return StreamMessage containing the ContextPropertyResponse.
      */
-    public Map<String, Object> getProxyObjectCache() {
-        return proxyReferenceCache.getCache();
+    public StreamMessage handleContextPropertyCallback(String callbackSessionId, ContextPropertyRequest request) {
+
+        String propertyPath = request.getPropertyPath();
+        long cpStart = System.currentTimeMillis();
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
+            System.out.println("[PERF] [" + cpStart + "] IS CTX_PROP_HANDLE_START session=" + callbackSessionId +
+                    " path=" + propertyPath + " handleStartTs=" + cpStart);
+        }
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] handleContextProperty: " + propertyPath + ", session: " + callbackSessionId);
+        }
+
+        try {
+            long cpExecStart = System.currentTimeMillis();
+
+            // Resolve property value based on path prefix routing
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Resolving context property: " + propertyPath +
+                        ", session: " + sessionId);
+            }
+
+            Object value;
+            // Handle proxy object property access: "__proxyref__::<referenceId>::<property>"
+            // This enables lazy loading of complex objects (e.g., User objects from getUsersWithClaimValues)
+            if (propertyPath.startsWith(RemoteEngineConstants.PROXY_REF_PREFIX)) {
+                value = proxyReferenceCache.getProxyObjectProperty(
+                        propertyPath.substring(RemoteEngineConstants.PROXY_REF_PREFIX.length()));
+            // Handle host function return references: "__hostref__::<refId>::<property>"
+            } else if (propertyPath.startsWith(RemoteEngineConstants.HOST_REF_PREFIX)) {
+                value = proxyReferenceCache.getHostRefProperty(
+                        propertyPath.substring(RemoteEngineConstants.HOST_REF_PREFIX.length()));
+            } else if (authContext == null) {
+                log.warn("[RemoteJsEngine] No authContext available for property access");
+                value = null;
+            } else {
+                // Create the JsGraalAuthenticationContext wrapper and navigate the property path
+                JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
+                String[] parts = propertyPath.split(RemoteEngineConstants.PATH_SEPARATOR);
+                value = PropertyPathNavigator.navigatePath(parts, 0, jsContext);
+            }
+
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Resolved context property '" + propertyPath + "' = " +
+                        (value != null ? value.getClass().getSimpleName() : "null"));
+            }
+
+            long cpExecEnd = System.currentTimeMillis();
+
+            ContextPropertyResponse.Builder responseBuilder = ContextPropertyResponse.newBuilder()
+                    .setSuccess(true);
+
+            // Handle __keys__ special path - value is the member keys array
+            if (propertyPath.endsWith(RemoteEngineConstants.PATH_SEPARATOR +
+                    RemoteEngineConstants.KEYS_PROPERTY) ||
+                    RemoteEngineConstants.KEYS_PROPERTY.equals(propertyPath)) {
+                if (value != null) {
+                    MemberKeyExtractor.extractTo(value, responseBuilder);
+                }
+                return StreamMessage.newBuilder()
+                        .setSessionId(callbackSessionId)
+                        .setContextPropertyResponse(responseBuilder.build())
+                        .build();
+            }
+
+            if (value != null) {
+                boolean isProxy = ProxyTypeResolver.isJsWrapperProxy(value);
+                responseBuilder.setIsProxy(isProxy);
+
+                if (isProxy) {
+                    responseBuilder.setProxyType(ProxyTypeResolver.getJsWrapperProxyType(value));
+                    if (value instanceof ProxyObject) {
+                        Object keys = ((ProxyObject) value).getMemberKeys();
+                        MemberKeyExtractor.extractTo(keys, responseBuilder);
+                    }
+                } else {
+                    responseBuilder.setValue(Serializer.toProto(value));
+                }
+            }
+
+            StreamMessage response = StreamMessage.newBuilder()
+                    .setSessionId(callbackSessionId)
+                    .setContextPropertyResponse(responseBuilder.build())
+                    .build();
+            long cpSentTs = System.currentTimeMillis();
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
+                System.out.println("[PERF] [" + cpSentTs + "] IS CTX_PROP_RESPONSE_BUILT session=" +
+                        callbackSessionId + " path=" + propertyPath +
+                        " handleStartTs=" + cpStart + " execStartTs=" + cpExecStart +
+                        " execEndTs=" + cpExecEnd + " builtTs=" + cpSentTs +
+                        " execMs=" + (cpExecEnd - cpExecStart) +
+                        " serMs=" + (cpSentTs - cpExecEnd) +
+                        " totalMs=" + (cpSentTs - cpStart));
+            }
+            return response;
+
+        } catch (Exception e) {
+            log.error("[GrpcStreaming] Error getting context property: " + propertyPath, e);
+            return StreamMessage.newBuilder()
+                    .setSessionId(callbackSessionId)
+                    .setContextPropertyResponse(ContextPropertyResponse.newBuilder()
+                            .setSuccess(false)
+                            .setErrorMessage(formatErrorForWire(e))
+                            .build())
+                    .build();
+        }
+    }
+
+    /**
+     * Handle a context property write callback request from the External.
+     * Deserializes the value from protobuf and delegates to property setting.
+     *
+     * @param callbackSessionId The session identifier for the stream message.
+     * @param request           The context property set request from the External.
+     * @return StreamMessage containing the ContextPropertySetResponse.
+     */
+    public StreamMessage handleContextPropertySetCallback(String callbackSessionId,
+                                                          ContextPropertySetRequest request) {
+
+        String propertyPath = request.getPropertyPath();
+        long cpsStart = System.currentTimeMillis();
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
+            System.out.println("[PERF] [" + cpsStart + "] IS CTX_PROP_SET_HANDLE_START session=" +
+                    callbackSessionId + " path=" + propertyPath + " handleStartTs=" + cpsStart);
+        }
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+            log.debug("[GrpcStreaming] handleContextPropertySet: " + propertyPath +
+                    ", session: " + callbackSessionId);
+        }
+
+        try {
+            long cpsDeserStart = System.currentTimeMillis();
+            Object javaValue = Serializer.fromProto(request.getValue());
+            long cpsExecStart = System.currentTimeMillis();
+            // Resolve property write based on path prefix routing
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
+                log.debug("[RemoteJsEngine] Setting context property: " + propertyPath + " = " +
+                        (javaValue != null ? javaValue.getClass().getSimpleName() : "null") +
+                        ", session: " + sessionId);
+            }
+
+            boolean success;
+            // Handle proxy object references (list elements from host function returns)
+            if (propertyPath.startsWith(RemoteEngineConstants.PROXY_REF_PREFIX)) {
+                success = proxyReferenceCache.setProxyObjectProperty(
+                        propertyPath.substring(RemoteEngineConstants.PROXY_REF_PREFIX.length()), javaValue);
+            // Handle host function return references
+            } else if (propertyPath.startsWith(RemoteEngineConstants.HOST_REF_PREFIX)) {
+                success = proxyReferenceCache.setHostRefProperty(
+                        propertyPath.substring(RemoteEngineConstants.HOST_REF_PREFIX.length()), javaValue);
+            } else if (authContext == null) {
+                log.warn("[RemoteJsEngine] No authContext available for property write");
+                success = false;
+            } else {
+                // Navigate to the parent object and set the final property via PropertyPathNavigator
+                String[] parts = propertyPath.split(RemoteEngineConstants.PATH_SEPARATOR);
+                if (parts.length == 0) {
+                    success = false;
+                } else {
+                    JsGraalAuthenticationContext jsContext = new JsGraalAuthenticationContext(authContext);
+                    success = PropertyPathNavigator.setProperty(parts, 0, jsContext, javaValue);
+                }
+            }
+            long cpsExecEnd = System.currentTimeMillis();
+
+            StreamMessage response = StreamMessage.newBuilder()
+                    .setSessionId(callbackSessionId)
+                    .setContextPropertySetResponse(ContextPropertySetResponse.newBuilder()
+                            .setSuccess(success)
+                            .build())
+                    .build();
+            long cpsSentTs = System.currentTimeMillis();
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
+                System.out.println("[PERF] [" + cpsSentTs + "] IS CTX_PROP_SET_RESPONSE_BUILT session=" +
+                        callbackSessionId + " path=" + propertyPath +
+                        " handleStartTs=" + cpsStart + " deserStartTs=" + cpsDeserStart +
+                        " execStartTs=" + cpsExecStart + " execEndTs=" + cpsExecEnd +
+                        " builtTs=" + cpsSentTs +
+                        " deserMs=" + (cpsExecStart - cpsDeserStart) +
+                        " execMs=" + (cpsExecEnd - cpsExecStart) +
+                        " buildMs=" + (cpsSentTs - cpsExecEnd) +
+                        " totalMs=" + (cpsSentTs - cpsStart));
+            }
+            return response;
+
+        } catch (Exception e) {
+            log.error("[GrpcStreaming] Error setting context property: " + propertyPath, e);
+            return StreamMessage.newBuilder()
+                    .setSessionId(callbackSessionId)
+                    .setContextPropertySetResponse(ContextPropertySetResponse.newBuilder()
+                            .setSuccess(false)
+                            .setErrorMessage(formatErrorForWire(e))
+                            .build())
+                    .build();
+        }
+    }
+
+    /**
+     * Builds a concise error string for transmission over gRPC.
+     * Includes the exception type, message (if any), and the top stack frame
+     * so the sidecar log shows WHERE the failure happened without leaking the full trace.
+     */
+    private String formatErrorForWire(Exception e) {
+
+        StringBuilder sb = new StringBuilder(e.toString());
+        StackTraceElement[] stack = e.getStackTrace();
+        if (stack.length > 0) {
+            sb.append(" at ").append(stack[0]);
+        }
+        return sb.toString();
     }
 
     // ======================== Private Helpers ========================
@@ -630,16 +864,16 @@ public class RemoteJsEngine implements JsEngine {
     }
 
     private void ensureConnected() throws IOException {
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[RemoteJsEngine] ensureConnected - transport: " + transport.getClass().getSimpleName() +
                     ", connected: " + transport.isConnected());
         }
         if (!transport.isConnected()) {
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Connecting transport");
             }
             transport.connect();
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Connected to remote engine successfully");
             }
         }

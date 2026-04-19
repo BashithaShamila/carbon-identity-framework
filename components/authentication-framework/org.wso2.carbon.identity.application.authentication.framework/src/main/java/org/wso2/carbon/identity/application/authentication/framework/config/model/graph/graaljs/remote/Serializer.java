@@ -23,6 +23,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.GraalSerializableJsFunction;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.GraalSerializer;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.SerializedArray;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.SerializedFunction;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.SerializedMap;
@@ -162,13 +163,13 @@ public class Serializer {
         if (serializable instanceof List) {
             @SuppressWarnings("unchecked")
             List<Object> listValue = (List<Object>) serializable;
-            if (JsEngineFactory.isTracingEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                 System.out.println("[Serializer] Serializing List with " + listValue.size() + " elements");
             }
             SerializedArray.Builder arrayBuilder = SerializedArray.newBuilder();
             for (int i = 0; i < listValue.size(); i++) {
                 Object element = listValue.get(i);
-                if (JsEngineFactory.isTracingEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[Serializer] List element[" + i + "] type: " +
                             (element != null ? element.getClass().getName() : "null"));
                 }
@@ -236,7 +237,7 @@ public class Serializer {
                 cache.put(referenceId, serializable);
 
                 String proxyType = ProxyTypeResolver.getJsWrapperProxyType(serializable);
-                if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("Created explicit proxy marker for nested JS Wrapper: " +
                             serializable.getClass().getName() + " with referenceId: " + referenceId);
                 }
@@ -253,56 +254,12 @@ public class Serializer {
             }
         }
 
-        // Generic POJO handling: Use LAZY PROXY pattern instead of eager introspection.
-        // This is CRITICAL for arrays of complex objects (e.g., getUsersWithClaimValues
-        // returning 100 User objects). Eagerly introspecting all getters triggers
-        // expensive operations (database calls) and causes timeouts.
-        //
-        // Instead, we create a proxy marker and cache the object. When the External
-        // accesses a property (e.g., users[i].username), it sends a callback to fetch
-        // only that property on-demand.
         Map<String, Object> cache = getSessionProxyCache();
-        boolean shouldProxy = ProxyTypeResolver.shouldUseProxyPattern(serializable);
-        if (JsEngineFactory.isTracingEnabled()) {
-            System.out.println("[Serializer] POJO check for " + serializable.getClass().getName() +
-                    " - cache=" + (cache != null ? "available" : "NULL") +
-                    " shouldProxy=" + shouldProxy);
-        }
 
-        if (cache != null && shouldProxy) {
-            // Create a unique reference ID for this object
-            String referenceId = java.util.UUID.randomUUID().toString();
-
-            // Store the actual object in the session cache
-            cache.put(referenceId, serializable);
-
-            if (JsEngineFactory.isTracingEnabled()) {
-                System.out.println("[Serializer] ✓ Created proxy marker for " +
-                        serializable.getClass().getName() + " with referenceId: " + referenceId);
-            }
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
-                log.debug("Created proxy marker for " + serializable.getClass().getName() +
-                        " with referenceId: " + referenceId);
-            }
-
-            // Return a proxy marker instead of eagerly serializing all properties
-            return SerializedValue.newBuilder()
-                    .setProxyObject(SerializedProxyObject.newBuilder()
-                            .setType(RemoteEngineConstants.PROXY_TYPE_POJO)
-                            .setReferenceId(referenceId)
-                            .build())
-                    .build();
-        }
-
-        // Every serializable type must be handled explicitly above.
-        // If we reach here, it means a new type was introduced without adding
-        // a corresponding handler — fail fast so it gets fixed immediately
-        // rather than silently corrupting data on the wire.
         throw new IllegalArgumentException(
                 "Unhandled type in Serializer.toProto(): " + serializable.getClass().getName() +
                 ". Add an explicit serialization handler for this type. " +
-                "Proxy cache was: " + (cache != null ? "available" : "NULL") +
-                ", shouldProxy=" + shouldProxy);
+                "Proxy cache was: " + (cache != null ? "available" : "NULL"));
     }
 
     /**

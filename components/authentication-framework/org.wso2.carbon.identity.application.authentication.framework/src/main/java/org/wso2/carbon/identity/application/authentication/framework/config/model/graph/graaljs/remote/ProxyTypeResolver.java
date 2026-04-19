@@ -18,6 +18,8 @@
 
 package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote;
 
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Unified proxy type detection for the remote JS engine.
  * Consolidates proxy type detection patterns from:
  * - Serializer.shouldUseProxyPattern() — POJO proxy caching (edge case #11)
- * - ExternalCallbackHandler — callback response proxy detection
+ * - RemoteJsEngine — callback response proxy detection
  * - GrpcStreamingTransportImpl — streaming response proxy detection
  *
  * Two distinct concerns:
@@ -74,53 +76,8 @@ public final class ProxyTypeResolver {
     }
 
     /**
-     * Check if an object should use the lazy proxy pattern instead of eager serialization.
-     * Used by Serializer for POJO caching (edge case #11).
-     *
-     * Criteria: class name contains ".User", ".user.", ".model.", or ".domain."
-     * (known domain object patterns with potentially expensive getter operations).
-     *
-     * Any POJO that doesn't match these patterns and isn't handled by an explicit
-     * serialization path will hit the IllegalArgumentException in Serializer.toProto(),
-     * failing fast so a handler can be added.
-     *
-     * Results are cached per class.
-     *
-     * @param obj The object to check
-     * @return true if proxy pattern should be used, false otherwise
-     */
-    public static boolean shouldUseProxyPattern(Object obj) {
-        if (obj == null) {
-            return false;
-        }
-
-        Class<?> clazz = obj.getClass();
-        return PROXY_PATTERN_CACHE.computeIfAbsent(clazz, ProxyTypeResolver::computeShouldUseProxyPattern);
-    }
-
-    private static boolean computeShouldUseProxyPattern(Class<?> clazz) {
-        String className = clazz.getName();
-
-        // Use proxy for domain objects that might have expensive operations.
-        // Common patterns: User, AuthenticatedUser, custom domain objects.
-        // Any unrecognized POJO that reaches Serializer.toProto() without matching
-        // these patterns will hit the IllegalArgumentException at the bottom,
-        // failing fast so a handler can be added.
-        boolean matchesClassName = className.contains(".User") ||
-                className.contains(".user.") ||
-                className.contains(".model.") ||
-                className.contains(".domain.");
-
-        if (JsEngineFactory.isTracingEnabled()) {
-            System.out.println("[ProxyTypeResolver] shouldUseProxyPattern: " + className +
-                    " - matches class pattern = " + matchesClassName);
-        }
-        return matchesClassName;
-    }
-
-    /**
      * Check if a value is a JS wrapper proxy type.
-     * Used by ExternalCallbackHandler and GrpcStreamingTransportImpl for callback/streaming
+     * Used by RemoteJsEngine and GrpcStreamingTransportImpl for callback/streaming
      * response serialization to determine if a host function return value should be
      * sent as a proxy reference rather than eagerly serialized.
      * <p>
@@ -134,7 +91,7 @@ public final class ProxyTypeResolver {
         if (value == null) {
             return false;
         }
-        return value instanceof org.graalvm.polyglot.proxy.Proxy;
+        return (value instanceof org.graalvm.polyglot.proxy.Proxy);
     }
 
     /**

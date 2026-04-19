@@ -20,7 +20,7 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngineFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineTransport;
 
 /**
@@ -44,7 +44,7 @@ public class GrpcTransportProvider {
      * @return The singleton RemoteEngineTransport instance.
      * @throws IllegalArgumentException if grpcTarget is null or empty.
      */
-    public static RemoteEngineTransport getOrCreateTransport(String grpcTarget) {
+    public static RemoteEngineTransport getTransport(String grpcTarget) {
 
         if (grpcTarget == null || grpcTarget.isEmpty()) {
             throw new IllegalArgumentException("gRPC target is required for gRPC transport");
@@ -53,7 +53,7 @@ public class GrpcTransportProvider {
         if (streamingInstance == null) {
             synchronized (lock) {
                 if (streamingInstance == null) {
-                    if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+                    if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                         log.debug("[GrpcTransportProvider] Creating GrpcStreamingTransportImpl " +
                                 "for target: " + grpcTarget);
                     }

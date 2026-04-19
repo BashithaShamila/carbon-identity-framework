@@ -20,6 +20,7 @@ package org.wso2.carbon.identity.application.authentication.framework.config.mod
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.JsGraalGraphEngineModeRouter;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -29,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Pre-computed dispatch table for host function invocation.
  * <p>
- * Replaces the per-invocation reflection scan in RemoteJsEngine.invokeHostFunction()
+ * Replaces the per-invocation reflection scan in RemoteJsEngine.handleHostFunctionCallback()
  * with O(1) HashMap lookup. Methods are resolved once at registration time via
  * {@link #register(Map)}, and each invocation goes through
  * {@link #invoke(String, ArgumentAdapter, Object[])}.
@@ -71,7 +72,7 @@ class HostFunctionRegistry {
             MethodInvoker invoker = new MethodInvoker(hostFuncInstance, targetMethod);
             dispatchTable.put(functionName, invoker);
 
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[HostFunctionRegistry] Registered '" + functionName + "' -> " +
                         targetMethod.getDeclaringClass().getSimpleName() + "." + targetMethod.getName() +
                         ", params=" + targetMethod.getParameterCount() +
@@ -98,7 +99,7 @@ class HostFunctionRegistry {
             throw new IllegalArgumentException("Unknown host function: " + functionName);
         }
 
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             log.debug("[HostFunctionRegistry] Dispatching '" + functionName + "' -> " +
                     invoker.getMethod().getName() + ", params=" + invoker.getParameterTypes().length +
                     ", args=" + (args != null ? args.length : 0));
@@ -106,7 +107,7 @@ class HostFunctionRegistry {
 
         Object[] adaptedArgs = argumentAdapter.adaptArgumentsForMethod(invoker.getMethod(), args);
 
-        if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
             for (int i = 0; i < adaptedArgs.length; i++) {
                 log.debug("[HostFunctionRegistry] Adapted arg[" + i + "]: type=" +
                         (adaptedArgs[i] != null ? adaptedArgs[i].getClass().getName() : "null"));
@@ -115,7 +116,7 @@ class HostFunctionRegistry {
 
         try {
             Object result = invoker.invoke(adaptedArgs);
-            if (JsEngineFactory.isTracingEnabled() && log.isDebugEnabled()) {
+            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[HostFunctionRegistry] '" + functionName + "' returned: " +
                         (result != null ? result.getClass().getName() + "=" + result : "null"));
             }
@@ -149,13 +150,13 @@ class HostFunctionRegistry {
 
     /**
      * Find the callable method on a host function object.
-     * Same priority order as the original RemoteJsEngine.invokeHostFunction():
+     * Same priority order as the original host function dispatch:
      * 1. First @HostAccess.Export annotated method
      * 2. First non-default interface method
      */
     private static Method findCallableMethod(Object instance) {
 
-        // Strategy 1: Look for @HostAccess.Export annotation
+        // Look for @HostAccess.Export annotation
         for (Method method : instance.getClass().getMethods()) {
             if (method.isAnnotationPresent(org.graalvm.polyglot.HostAccess.Export.class)) {
                 return method;

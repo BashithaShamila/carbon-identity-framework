@@ -16,7 +16,7 @@
  * under the License.
  */
 
-package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server;
+package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote;
 
 import org.graalvm.polyglot.proxy.ProxyArray;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ContextPropertyResponse;
@@ -35,7 +35,7 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 final class MemberKeyExtractor {
 
     private MemberKeyExtractor() {
-        // Utility class — no instantiation.
+        // Utility class
     }
 
     /**

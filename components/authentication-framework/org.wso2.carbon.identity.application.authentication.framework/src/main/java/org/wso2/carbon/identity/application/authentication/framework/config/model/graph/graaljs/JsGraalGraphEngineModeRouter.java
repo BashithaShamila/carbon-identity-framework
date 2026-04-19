@@ -16,7 +16,7 @@
  * under the License.
  */
 
-package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote;
+package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -30,7 +30,10 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsServletResponse;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.graaljs.JsGraalAuthenticatedUser;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
-import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server.GrpcTransportProvider;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteEngineTransport;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.RemoteJsEngine;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.JsEngine;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.ScriptEngineModeResolver;
 import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 
@@ -56,9 +59,9 @@ import static org.wso2.carbon.identity.application.authentication.framework.util
  * In HYBRID mode, the engine selection is delegated to a {@link ScriptEngineModeResolver}
  * OSGi service, which can be customized by dropping a bundle into the dropins folder.
  */
-public class JsEngineFactory {
+public class JsGraalGraphEngineModeRouter {
 
-    private static final Log log = LogFactory.getLog(JsEngineFactory.class);
+    private static final Log log = LogFactory.getLog(JsGraalGraphEngineModeRouter.class);
 
     /**
      * Execution mode for JavaScript engine.
@@ -110,14 +113,14 @@ public class JsEngineFactory {
                         FrameworkServiceDataHolder.getInstance().getScriptEngineModeResolver();
 
                 if (resolver == null) {
-                    log.warn("[JsEngineFactory] HYBRID mode configured but no ScriptEngineModeResolver " +
+                    log.warn("[JsGraalGraphEngineModeRouter] HYBRID mode configured but no ScriptEngineModeResolver " +
                             "OSGi service found. Falling back to LOCAL.");
                     return ExecutionMode.LOCAL;
                 }
 
                 ExecutionMode resolved = resolver.resolve(context);
                 if (isTracingEnabled() && log.isDebugEnabled()) {
-                    log.debug("[JsEngineFactory] HYBRID mode resolved to: " + resolved +
+                    log.debug("[JsGraalGraphEngineModeRouter] HYBRID mode resolved to: " + resolved +
                             " for SP: " + (context != null ?
                             context.getServiceProviderName() : "null"));
                 }
@@ -146,11 +149,10 @@ public class JsEngineFactory {
     // Remote engine tracing toggle — guards debug/perf logs in remote package.
     private boolean tracingEnabled = DEFAULT_REMOTE_ENGINE_TRACING;
 
-    // Lazy singleton holder — JsEngineFactory is only created when getInstance() is first called.
-    // This ensures initializeFromConfig() runs after IdentityUtil has been populated.
-    private static volatile JsEngineFactory instance;
+    // singleton holder
+    private static volatile JsGraalGraphEngineModeRouter instance;
 
-    private JsEngineFactory() {
+    private JsGraalGraphEngineModeRouter() {
 
         initializeFromConfig();
     }
@@ -158,49 +160,21 @@ public class JsEngineFactory {
     /**
      * Get the singleton instance. Uses lazy initialization to ensure config is available.
      *
-     * @return JsEngineFactory instance.
+     * @return JsGraalGraphEngineModeRouter instance.
      */
-    public static JsEngineFactory getInstance() {
+    public static JsGraalGraphEngineModeRouter getInstance() {
 
         if (instance == null) {
-            synchronized (JsEngineFactory.class) {
+            synchronized (JsGraalGraphEngineModeRouter.class) {
                 if (instance == null) {
-                    instance = new JsEngineFactory();
+                    instance = new JsGraalGraphEngineModeRouter();
                 }
             }
         }
         return instance;
     }
 
-    /**
-     * Create a JavaScript engine for the given authentication context.
-     * This is only called from remote execution code paths.
-     *
-     * @param authenticationContext The authentication context.
-     * @return A JsEngine instance configured for remote execution.
-     */
-    public JsEngine createEngine(AuthenticationContext authenticationContext) {
 
-        return createRemoteEngine(authenticationContext);
-    }
-
-    /**
-     * Create a remote (External) JavaScript engine.
-     * Uses the embedded gRPC transport provider directly within the same bundle.
-     *
-     * @param authenticationContext The authentication context.
-     * @return RemoteJsEngine instance.
-     */
-    public RemoteJsEngine createRemoteEngine(AuthenticationContext authenticationContext) {
-
-        RemoteEngineTransport transport = GrpcTransportProvider.getOrCreateTransport(grpcTarget);
-
-        if (isTracingEnabled() && log.isDebugEnabled()) {
-            log.debug("[JsEngineFactory] Created remote engine with transport: " +
-                    transport.getClass().getSimpleName() + ", target: " + grpcTarget);
-        }
-        return new RemoteJsEngine(transport, authenticationContext);
-    }
 
     /**
      * Get the configured engine mode.
@@ -271,32 +245,6 @@ public class JsEngineFactory {
         return resourceLimitsBuilder.build();
     }
 
-    /**
-     * Get the host access configuration for local engine.
-     *
-     * @return HostAccess instance.
-     */
-    public HostAccess getHostAccess() {
-
-        return HostAccess.newBuilder(HostAccess.EXPLICIT)
-                .allowListAccess(true)
-                .targetTypeMapping(Value.class, JsAuthenticationContext.class,
-                        (v) -> v.asProxyObject() instanceof JsAuthenticationContext,
-                        (v) -> (JsAuthenticationContext) v.asProxyObject())
-                .targetTypeMapping(Value.class, JsAuthenticatedUser.class,
-                        (v) -> v.asProxyObject() instanceof JsGraalAuthenticatedUser,
-                        (v) -> (JsAuthenticatedUser) v.asProxyObject())
-                .targetTypeMapping(Value.class, JsServletRequest.class,
-                        (v) -> v.asProxyObject() instanceof JsServletRequest,
-                        (v) -> (JsServletRequest) v.asProxyObject())
-                .targetTypeMapping(Value.class, JsServletResponse.class,
-                        (v) -> v.asProxyObject() instanceof JsServletResponse,
-                        (v) -> (JsServletResponse) v.asProxyObject())
-                .targetTypeMapping(Value.class, JsParameters.class,
-                        (v) -> v.asProxyObject() instanceof JsParameters,
-                        (v) -> (JsParameters) v.asProxyObject())
-                .build();
-    }
 
     private void initializeFromConfig() {
 
@@ -337,7 +285,7 @@ public class JsEngineFactory {
             tracingEnabled = Boolean.parseBoolean(tracingStr.trim());
         }
 
-        log.info("JsEngineFactory initialized. EngineMode: " + engineMode +
+        log.info("JsGraalGraphEngineModeRouter initialized. EngineMode: " + engineMode +
                 ", gRPC Target: " + grpcTarget +
                 ", RemoteEngineTracing: " + tracingEnabled);
     }
