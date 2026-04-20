@@ -128,10 +128,7 @@ public class RemoteJsEngine implements JsEngine {
             long tConnectDone = System.currentTimeMillis();
 
             // Phase 2: Build request (protobuf serialization)
-            // Apply initial bindings
-            if (initialBindings != null) {
-                bindings.putAll(initialBindings);
-            }
+
 
             // Build the request
             EvaluateRequest.Builder requestBuilder = EvaluateRequest.newBuilder()
@@ -143,16 +140,6 @@ public class RemoteJsEngine implements JsEngine {
             if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                 log.debug("[RemoteJsEngine] Serializing " + bindings.size() + " bindings, " +
                         hostFunctions.size() + " host functions");
-            }
-            for (Map.Entry<String, Object> entry : bindings.entrySet()) {
-                // Skip "context" -- JsGraalAuthenticationContext is not Serializer-compatible.
-                // Context state is sent as structured ContextData and the External accesses it
-                // via DynamicContextProxy callbacks. Serializing it here causes a toString()
-                // If this binding is ever needed, implement a proper
-                // toProto() conversion for JsGraalAuthenticationContext first.
-                if (!RemoteEngineConstants.CONTEXT_BINDING_KEY.equals(entry.getKey()) && !hostFunctions.containsKey(entry.getKey())) {
-                    requestBuilder.putBindings(entry.getKey(), Serializer.toProto(entry.getValue()));
-                }
             }
 
             // Add host function definitions so External knows to call back

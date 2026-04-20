@@ -1,21 +1,3 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (http://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
-
 package org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.server;
 
 import io.grpc.ChannelCredentials;
@@ -34,52 +16,37 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Singleton manager for gRPC client channels and callback server.
- * <p>
- * Manages the lifecycle of:
- * - ManagedChannel for client connections to remote JS engine
- * - gRPC Server for receiving host function callbacks
- * <p>
- * Uses double-checked locking pattern for thread-safe lazy initialization.
- * <p>
- * Thread safety:
- * - Pool creation/teardown is synchronized (rare operation, startup/target change only).
- * - Round-robin channel selection uses AtomicInteger outside synchronized block
- *   to avoid serializing concurrent gRPC requests through a single lock.
- * - channelPool is volatile for safe publication to unsynchronized readers
- *   (isClientChannelConnected).
+ * Cleaner version of GrpcConnectionManager using immutable pool holder.
  */
 public class GrpcConnectionManager {
 
     private static final Log log = LogFactory.getLog(GrpcConnectionManager.class);
 
-    // Singleton instance
+    // Singleton
     private static volatile GrpcConnectionManager instance;
     private static final Object lock = new Object();
 
-    // Client channel pool for requests to remote JS engine.
-    // Volatile for safe publication: isClientChannelConnected() reads this without
-    // synchronization. The volatile write in getClientChannel() (after pool creation)
-    // guarantees that concurrent readers see either null or a fully initialized array.
-    private volatile ManagedChannel[] channelPool;
-    private final AtomicInteger channelIndex = new AtomicInteger(0);
-    private int channelPoolSize = 4; // default pool size
-    private String grpcTarget;
-    private int channelIdleTimeout = 180; // seconds
+    // Immutable holder for pool state
+    private static final class ChannelPool {
+        final ManagedChannel[] channels;
+        final String target;
 
-    /**
-     * Private constructor - use getInstance()
-     */
+        ChannelPool(ManagedChannel[] channels, String target) {
+            this.channels = channels;
+            this.target = target;
+        }
+    }
+
+    private volatile ChannelPool pool;
+    private final AtomicInteger channelIndex = new AtomicInteger(0);
+
+    private int channelPoolSize = 4;
+    private int channelIdleTimeout = 180;
+
     private GrpcConnectionManager() {
-        // Configuration will be loaded from deployment.toml or system properties
         loadConfiguration();
     }
 
-    /**
-     * Get singleton instance with double-checked locking.
-     *
-     * @return GrpcConnectionManager instance
-     */
     public static GrpcConnectionManager getInstance() {
         if (instance == null) {
             synchronized (lock) {
@@ -92,60 +59,47 @@ public class GrpcConnectionManager {
     }
 
     /**
-     * Get or create the client channel for communicating with remote JS engine.
-     * <p>
-     * Pool creation is synchronized (rare: first call or target change).
-     * Channel selection is lock-free via AtomicInteger round-robin.
-     *
-     * @param target gRPC target (e.g., "localhost:50051")
-     * @return ManagedChannel instance
+     * lock-free channel selection
      */
     public ManagedChannel getClientChannel(String target) {
-        // Fast path: pool exists and target matches — lock-free round-robin selection.
-        // Read volatile channelPool once into local variable for consistent snapshot.
-        ManagedChannel[] pool = this.channelPool;
-        if (pool != null && target.equals(this.grpcTarget)) {
-            int index = (channelIndex.getAndIncrement() & 0x7FFFFFFF) % pool.length;
-            return pool[index];
+        ChannelPool current = pool;
+
+        if (current != null && current.target.equals(target)) {
+            int index = (channelIndex.getAndIncrement() & Integer.MAX_VALUE)
+                    % current.channels.length;
+            return current.channels[index];
         }
 
-        // Slow path: pool not created or target changed — synchronized initialization.
-        return getOrCreateChannelPool(target);
+        return createOrReplacePool(target);
     }
 
     /**
-     * Synchronized pool creation/recreation. Called only on first access or target change.
+     * synchronized pool creation/replacement
      */
-    private synchronized ManagedChannel getOrCreateChannelPool(String target) {
-        // Double-check under lock: another thread may have created the pool while we waited.
-        if (this.channelPool != null && target.equals(this.grpcTarget)) {
-            ManagedChannel[] pool = this.channelPool;
-            int index = (channelIndex.getAndIncrement() & 0x7FFFFFFF) % pool.length;
-            return pool[index];
+    private synchronized ManagedChannel createOrReplacePool(String target) {
+        ChannelPool current = pool;
+
+        // Double check
+        if (current != null && current.target.equals(target)) {
+            return pick(current);
         }
 
-        // Target changed or first initialization
-        if (this.channelPool != null) {
-            log.info("[GrpcConnectionManager] Target changed, shutting down old channel pool");
-            shutdownPoolInternal();
+        if (current != null) {
+            log.info("[GrpcConnectionManager] Target changed, shutting down old pool");
+            shutdown(current);
         }
-        this.grpcTarget = target;
 
-        log.info("[GrpcConnectionManager] Creating gRPC client channel pool of size " +
-                channelPoolSize + " to: " + target +
-                ", mTLS: " + RemoteEngineConstants.MTLS_ENABLED);
+        log.info("[GrpcConnectionManager] Creating channel pool of size " +
+                channelPoolSize + " for target: " + target);
 
-        // Build into a temporary array. If any channel creation fails, clean up all
-        // channels created so far and propagate the error. This prevents a partially
-        // initialized channelPool with null entries that would cause NPE on round-robin.
-        ManagedChannel[] tempPool = new ManagedChannel[channelPoolSize];
+        ManagedChannel[] channels = new ManagedChannel[channelPoolSize];
+
         try {
-            for (int i = 0; i < channelPoolSize; i++) {
-                tempPool[i] = createChannel(target);
+            for (int i = 0; i < channels.length; i++) {
+                channels[i] = createChannel(target);
             }
         } catch (RuntimeException e) {
-            // Clean up any channels that were successfully created before the failure.
-            for (ManagedChannel ch : tempPool) {
+            for (ManagedChannel ch : channels) {
                 if (ch != null) {
                     ch.shutdownNow();
                 }
@@ -153,33 +107,29 @@ public class GrpcConnectionManager {
             throw e;
         }
 
-        // Volatile write: publishes the fully initialized array to concurrent readers.
-        this.channelPool = tempPool;
+        ChannelPool newPool = new ChannelPool(channels, target);
+        pool = newPool;
         channelIndex.set(0);
 
-        log.info("[GrpcConnectionManager] gRPC client channel pool created successfully (" +
-                channelPoolSize + " channels)");
+        return newPool.channels[0];
+    }
 
-        return tempPool[0];
+    private ManagedChannel pick(ChannelPool pool) {
+        int index = (channelIndex.getAndIncrement() & Integer.MAX_VALUE)
+                % pool.channels.length;
+        return pool.channels[index];
     }
 
     /**
-     * Check if client channel is connected and ready.
-     * <p>
-     * This method is intentionally NOT synchronized. It reads the volatile
-     * {@code channelPool} reference for a fast-path check. The worst case
-     * if it sees a stale null is one extra {@code connect()} call, which is
-     * idempotent.
-     *
-     * @return true if channel exists and not shutdown/terminated
+     * health check
      */
     public boolean isClientChannelConnected() {
-        // Read volatile once into local for consistent snapshot.
-        ManagedChannel[] pool = this.channelPool;
-        if (pool == null) {
+        ChannelPool current = pool;
+        if (current == null) {
             return false;
         }
-        for (ManagedChannel ch : pool) {
+
+        for (ManagedChannel ch : current.channels) {
             if (ch != null && !ch.isShutdown() && !ch.isTerminated()) {
                 return true;
             }
@@ -188,58 +138,42 @@ public class GrpcConnectionManager {
     }
 
     /**
-     * Shutdown the client channel gracefully.
+     * Shutdown all channels
      */
-    public synchronized void shutdownClientChannel() {
-        shutdownPoolInternal();
-    }
-
-    /**
-     * Internal pool shutdown — must be called under synchronized.
-     */
-    private void shutdownPoolInternal() {
-        ManagedChannel[] pool = this.channelPool;
+    public synchronized void shutdown() {
         if (pool != null) {
-            log.info("[GrpcConnectionManager] Shutting down gRPC client channel pool (" +
-                    pool.length + " channels)");
-            for (int i = 0; i < pool.length; i++) {
-                if (pool[i] != null) {
-                    try {
-                        pool[i].shutdown().awaitTermination(5, TimeUnit.SECONDS);
-                    } catch (InterruptedException e) {
-                        log.warn("[GrpcConnectionManager] Interrupted while shutting down channel " +
-                                i, e);
-                        pool[i].shutdownNow();
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }
-            // Volatile write: concurrent readers of channelPool will see null.
-            this.channelPool = null;
+            log.info("[GrpcConnectionManager] Shutting down all channels");
+            shutdown(pool);
+            pool = null;
             channelIndex.set(0);
         }
     }
 
-    /**
-     * Shutdown all gRPC resources.
-     */
-    public synchronized void shutdown() {
-        log.info("[GrpcConnectionManager] Shutting down all gRPC resources");
-        shutdownPoolInternal();
+    private void shutdown(ChannelPool pool) {
+        for (int i = 0; i < pool.channels.length; i++) {
+            ManagedChannel ch = pool.channels[i];
+            if (ch != null) {
+                try {
+                    ch.shutdown().awaitTermination(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    ch.shutdownNow();
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
     }
 
     /**
-     * Load configuration from deployment.toml or system properties.
+     * Configuration loading
      */
     private void loadConfiguration() {
 
-        // Check system properties for override
         String idleTimeoutStr = System.getProperty("graaljs.grpc.channel.idle.timeout");
         if (idleTimeoutStr != null) {
             try {
                 channelIdleTimeout = Integer.parseInt(idleTimeoutStr);
             } catch (NumberFormatException e) {
-                log.warn("[GrpcConnectionManager] Invalid idle timeout value: " + idleTimeoutStr);
+                log.warn("Invalid idle timeout: " + idleTimeoutStr);
             }
         }
 
@@ -251,50 +185,33 @@ public class GrpcConnectionManager {
                     channelPoolSize = size;
                 }
             } catch (NumberFormatException e) {
-                log.warn("[GrpcConnectionManager] Invalid channel pool size value: " + poolSizeStr);
+                log.warn("Invalid pool size: " + poolSizeStr);
             }
         }
 
-        log.info("[GrpcConnectionManager] Configuration loaded - ChannelPoolSize: " + channelPoolSize +
-                ", IdleTimeout: " + channelIdleTimeout + "s");
+        log.info("Config loaded - PoolSize: " + channelPoolSize +
+                ", IdleTimeout: " + channelIdleTimeout);
     }
 
     /**
-     * Create a single ManagedChannel to the given target.
-     * Uses mTLS when {@link RemoteEngineConstants#MTLS_ENABLED} is true,
-     * otherwise falls back to plaintext.
-     *
-     * @param target gRPC target (e.g., "localhost:50051")
-     * @return ManagedChannel instance
+     * Channel creation (mTLS / plaintext)
      */
     private ManagedChannel createChannel(String target) {
         if (RemoteEngineConstants.MTLS_ENABLED) {
             try {
                 String carbonHome = System.getProperty("carbon.home");
                 if (carbonHome == null) {
-                    throw new IllegalStateException("carbon.home system property is not set. " +
-                            "Cannot locate mTLS certificates.");
+                    throw new IllegalStateException("carbon.home not set");
                 }
+
                 File certDir = new File(carbonHome, RemoteEngineConstants.MTLS_CERT_DIR);
                 File clientCert = new File(certDir, RemoteEngineConstants.MTLS_CLIENT_CERT);
                 File clientKey = new File(certDir, RemoteEngineConstants.MTLS_CLIENT_KEY);
                 File caCert = new File(certDir, RemoteEngineConstants.MTLS_CA_CERT);
 
                 if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
-                    System.out.println("[GrpcConnectionManager] mTLS enabled - loading certs from: " +
-                            certDir.getAbsolutePath());
-                }
-                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
-                    System.out.println("[GrpcConnectionManager]   client cert: " + clientCert.getAbsolutePath() +
-                            " (exists=" + clientCert.exists() + ")");
-                }
-                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
-                    System.out.println("[GrpcConnectionManager]   client key:  " + clientKey.getAbsolutePath() +
-                            " (exists=" + clientKey.exists() + ")");
-                }
-                if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
-                    System.out.println("[GrpcConnectionManager]   CA cert:     " + caCert.getAbsolutePath() +
-                            " (exists=" + caCert.exists() + ")");
+                    System.out.println("[GrpcConnectionManager] Loading mTLS certs from: "
+                            + certDir.getAbsolutePath());
                 }
 
                 ChannelCredentials credentials = TlsChannelCredentials.newBuilder()
@@ -307,8 +224,7 @@ public class GrpcConnectionManager {
                         .build();
 
             } catch (IOException e) {
-                throw new RuntimeException("[GrpcConnectionManager] Failed to initialize mTLS channel. " +
-                        "Ensure cert files exist in " + RemoteEngineConstants.MTLS_CERT_DIR, e);
+                throw new RuntimeException("Failed to init mTLS channel", e);
             }
         } else {
             return ManagedChannelBuilder.forTarget(target)
@@ -318,32 +234,18 @@ public class GrpcConnectionManager {
         }
     }
 
-    /**
-     * Set channel idle timeout (for testing/configuration).
-     *
-     * @param seconds Timeout in seconds
-     */
-    public void setChannelIdleTimeout(int seconds) {
-        this.channelIdleTimeout = seconds;
-    }
+    // Optional setters
 
-    /**
-     * Set channel pool size (for testing/configuration).
-     * Must be called before getClientChannel() to take effect.
-     *
-     * @param size Pool size (must be greater than 0)
-     */
     public void setChannelPoolSize(int size) {
         if (size > 0) {
             this.channelPoolSize = size;
         }
     }
 
-    /**
-     * Get the current channel pool size.
-     *
-     * @return Pool size
-     */
+    public void setChannelIdleTimeout(int seconds) {
+        this.channelIdleTimeout = seconds;
+    }
+
     public int getChannelPoolSize() {
         return channelPoolSize;
     }
