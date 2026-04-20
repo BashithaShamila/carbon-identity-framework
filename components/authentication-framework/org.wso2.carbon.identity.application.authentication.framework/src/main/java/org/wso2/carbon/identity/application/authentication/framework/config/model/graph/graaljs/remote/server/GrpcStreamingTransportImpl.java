@@ -96,12 +96,6 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
     // ============ RemoteEngineTransport Methods ============
 
     @Override
-    public EvaluateResponse sendEvaluate(EvaluateRequest request) throws IOException {
-        throw new UnsupportedOperationException(
-                "Use sendEvaluate(request, handler) in bidirectional streaming mode.");
-    }
-
-    @Override
     public EvaluateResponse sendEvaluate(EvaluateRequest request, RemoteJsEngine handler) throws IOException {
         String sessionId = request.getSessionId();
         long t0 = System.currentTimeMillis();
@@ -194,12 +188,6 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
                 }
             }
         }
-    }
-
-    @Override
-    public ExecuteCallbackResponse sendExecuteCallback(ExecuteCallbackRequest request) throws IOException {
-        throw new UnsupportedOperationException(
-                "Use sendExecuteCallback(request, handler) in bidirectional streaming mode.");
     }
 
     @Override

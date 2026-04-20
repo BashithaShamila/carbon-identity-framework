@@ -128,8 +128,6 @@ public class RemoteJsEngine implements JsEngine {
             long tConnectDone = System.currentTimeMillis();
 
             // Phase 2: Build request (protobuf serialization)
-
-
             // Build the request
             EvaluateRequest.Builder requestBuilder = EvaluateRequest.newBuilder()
                     .setSessionId(sessionId)
@@ -488,9 +486,6 @@ public class RemoteJsEngine implements JsEngine {
     }
 
     // ======================== Callback Handling ========================
-    // These methods handle External callback requests inline on the IS HTTP thread.
-    // Each method: deserializes the request, executes the operation, serializes the response,
-    // and returns a StreamMessage. The caller (transport layer) writes it to the gRPC stream.
 
     /**
      * Handle a host function callback request from the External.

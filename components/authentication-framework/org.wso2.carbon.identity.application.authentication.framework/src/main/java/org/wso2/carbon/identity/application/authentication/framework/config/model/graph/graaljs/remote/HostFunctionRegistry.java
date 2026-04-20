@@ -162,16 +162,6 @@ class HostFunctionRegistry {
                 return method;
             }
         }
-
-        // Strategy 2: First non-default interface method
-//        for (Class<?> iface : instance.getClass().getInterfaces()) {
-//            for (Method method : iface.getMethods()) {
-//                if (!method.isDefault() && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-//                    return method;
-//                }
-//            }
-//        }
-
         return null;
     }
 
