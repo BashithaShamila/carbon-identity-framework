@@ -23,7 +23,6 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ExecuteCallbackRequest;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.remote.proto.ExecuteCallbackResponse;
 
-import java.io.Closeable;
 import java.io.IOException;
 
 /**
@@ -36,7 +35,7 @@ import java.io.IOException;
  * This interface decouples the RemoteJsEngine from specific transport implementations,
  * allowing per-instance transport selection and future extensibility.
  */
-public interface RemoteEngineTransport extends Closeable {
+public interface RemoteEngineTransport {
 
     EvaluateResponse sendEvaluate(EvaluateRequest request,
                                   RemoteJsEngine engine) throws IOException;
@@ -47,7 +46,4 @@ public interface RemoteEngineTransport extends Closeable {
     void connect() throws IOException;
 
     boolean isConnected();
-
-    @Override
-    void close() throws IOException;
 }

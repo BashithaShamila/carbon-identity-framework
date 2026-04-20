@@ -31,7 +31,7 @@ import java.util.Map;
  * the same engine
  * concurrently in a server environment.
  */
-public interface JsEngine extends AutoCloseable {
+public interface JsEngine {
 
     /**
      * Evaluate a JavaScript script with the given bindings.
@@ -89,9 +89,4 @@ public interface JsEngine extends AutoCloseable {
      */
     String getSessionId();
 
-    /**
-     * Close this engine and release any resources.
-     */
-    @Override
-    void close();
 }

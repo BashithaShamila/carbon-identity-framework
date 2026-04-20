@@ -303,16 +303,6 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
         return connectionManager.isClientChannelConnected();
     }
 
-    @Override
-    public void close() throws IOException {
-        if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
-            log.debug("[GrpcStreaming] close() called - singleton transport, channel pool remains active, " +
-                    "correlationId: " + correlationId);
-        }
-        // Don't shutdown channel pool - this is a singleton transport shared across all sessions.
-        // Per-session cleanup is handled by stream onCompleted() in finally.
-    }
-
     // ============ Message Loop ============
 
     /**

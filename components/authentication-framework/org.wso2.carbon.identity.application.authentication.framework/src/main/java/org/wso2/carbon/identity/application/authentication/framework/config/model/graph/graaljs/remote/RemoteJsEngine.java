@@ -87,8 +87,6 @@ public class RemoteJsEngine implements JsEngine {
     private final ProxyReferenceCache proxyReferenceCache;
     private final HostFunctionRegistry hostFunctionRegistry;
 
-    private volatile boolean closed = false;
-
     /**
      * Create a new remote JavaScript engine.
      *
@@ -465,24 +463,6 @@ public class RemoteJsEngine implements JsEngine {
     @Override
     public String getSessionId() {
         return sessionId;
-    }
-
-    @Override
-    public void close() {
-        if (!closed) {
-            closed = true;
-
-            try {
-                transport.close();
-            } catch (IOException e) {
-                if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
-                    log.debug("Error closing transport", e);
-                }
-            }
-            if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
-                log.debug("RemoteJsEngine closed for session: " + sessionId);
-            }
-        }
     }
 
     // ======================== Callback Handling ========================

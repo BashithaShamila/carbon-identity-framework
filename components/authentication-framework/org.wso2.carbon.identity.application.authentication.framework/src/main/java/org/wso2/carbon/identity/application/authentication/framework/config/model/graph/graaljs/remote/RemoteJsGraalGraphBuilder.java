@@ -128,10 +128,10 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
     @SuppressWarnings("unchecked")
     public RemoteJsGraalGraphBuilder createWith(String script) {
 
-        try (JsEngine jsEngine =
-                     new RemoteJsEngine(
-                             GrpcTransportProvider.getTransport(JsGraalGraphEngineModeRouter.getGrpcTarget()),
-                             authenticationContext)) {
+        JsEngine jsEngine = new RemoteJsEngine(
+                GrpcTransportProvider.getTransport(JsGraalGraphEngineModeRouter.getGrpcTarget()),
+                authenticationContext);
+        try {
             currentBuilder.set(this);
             contextForJs.set(authenticationContext);
 
@@ -820,10 +820,10 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                 return jsFunction.getSource();
             }
 
-            try (JsEngine jsEngine =
-                         new RemoteJsEngine(
-                            GrpcTransportProvider.getTransport(JsGraalGraphEngineModeRouter.getGrpcTarget()),
-                            authenticationContext)){
+            JsEngine jsEngine = new RemoteJsEngine(
+                    GrpcTransportProvider.getTransport(JsGraalGraphEngineModeRouter.getGrpcTarget()),
+                    authenticationContext);
+            try {
                 currentBuilder.set(graphBuilder);
                 contextForJs.set(authenticationContext);
 
