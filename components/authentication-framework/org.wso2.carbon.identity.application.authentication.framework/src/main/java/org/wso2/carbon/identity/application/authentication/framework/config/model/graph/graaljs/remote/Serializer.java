@@ -216,21 +216,19 @@ public class Serializer {
                     .build();
         }
 
-        // Handle AbstractJSObjectWrapper types (JsGraalWritableParameters, JsGraalParameters, etc.)
-        // These wrap Maps but don't implement the Map interface, so they fall through the Map check above.
-        // Extract the wrapped Map and serialize it directly. This is critical for callback arguments
-        // like the httpGet response data (JsGraalWritableParameters wrapping the HTTP JSON response).
-        if (serializable instanceof org.wso2.carbon.identity.application.authentication.framework
-                .config.model.graph.js.AbstractJSObjectWrapper) {
-            Object wrapped = ((org.wso2.carbon.identity.application.authentication.framework
-                    .config.model.graph.js.AbstractJSObjectWrapper<?>) serializable).getWrapped();
-            if (wrapped instanceof Map) {
-                return toProto(wrapped);
-            }
-        }
-
-
+        // Handle JsGraal* proxy types (ProxyObject/ProxyArray implementations).
+        // Two sub-cases:
+        // 1. JsGraalParameters/JsGraalWritableParameters: unwrap the inner Map and serialize
+        //    it directly. Critical for httpGet/httpPost response data.
+        // 2. All other proxies (JsGraalAuthenticatedUser, JsGraalStep, etc.): store in the
+        //    session proxy cache for lazy property loading via __proxyref__ path.
         if (ProxyTypeResolver.isJsWrapperProxy(serializable)) {
+            if (serializable instanceof org.wso2.carbon.identity.application.authentication.framework
+                    .config.model.graph.js.JsParameters) {
+                return toProto(((org.wso2.carbon.identity.application.authentication.framework
+                        .config.model.graph.js.JsParameters) serializable).getWrapped());
+            }
+
             Map<String, Object> cache = getSessionProxyCache();
             if (cache != null) {
                 String referenceId = java.util.UUID.randomUUID().toString();

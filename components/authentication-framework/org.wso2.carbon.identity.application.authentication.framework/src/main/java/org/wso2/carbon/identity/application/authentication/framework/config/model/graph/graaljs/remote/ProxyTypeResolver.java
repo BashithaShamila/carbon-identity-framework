@@ -109,18 +109,14 @@ public final class ProxyTypeResolver {
      * @return The proxy type name (lowercased)
      */
     public static String getJsWrapperProxyType(Object value) {
+
         String simpleName = value.getClass().getSimpleName();
-        String registeredType = PROXY_TYPE_NAMES.get(simpleName);
-        if (registeredType != null) {
-            return registeredType;
+        String type = PROXY_TYPE_NAMES.get(simpleName);
+
+        if (type == null) {
+            throw new IllegalStateException(
+                    "Unregistered JS wrapper proxy type: " + simpleName + ". Add it to PROXY_TYPE_NAMES.");
         }
-        // Fallback for unregistered types: same behavior as original code
-        // (strip JsGraal/Js prefix), ensuring wire compatibility
-        if (simpleName.startsWith("JsGraal")) {
-            return simpleName.substring(7).toLowerCase();
-        } else if (simpleName.startsWith("Js")) {
-            return simpleName.substring(2).toLowerCase();
-        }
-        return simpleName.toLowerCase();
+        return type;
     }
 }

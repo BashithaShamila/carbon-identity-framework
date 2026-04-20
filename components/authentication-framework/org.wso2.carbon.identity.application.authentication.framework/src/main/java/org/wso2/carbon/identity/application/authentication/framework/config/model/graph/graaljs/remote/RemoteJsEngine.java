@@ -580,8 +580,6 @@ public class RemoteJsEngine implements JsEngine {
                                 .build())
                         .build();
             } else {
-                // CRITICAL: Set proxy cache ThreadLocal before serialization.
-                // This enables lazy-loading proxy pattern for complex objects (e.g., User arrays).
                 Map<String, Object> proxyCache = proxyReferenceCache.getCache();
                 if (JsGraalGraphEngineModeRouter.isTracingEnabled()) {
                     System.out.println("[GrpcStreaming] Setting proxy cache ThreadLocal - cache size: " +
@@ -688,7 +686,7 @@ public class RemoteJsEngine implements JsEngine {
             ContextPropertyResponse.Builder responseBuilder = ContextPropertyResponse.newBuilder()
                     .setSuccess(true);
 
-            // Handle __keys__ special path - value is the member keys array
+            // Handle __keys__ path - value is the member keys array
             if (propertyPath.endsWith(RemoteEngineConstants.PATH_SEPARATOR +
                     RemoteEngineConstants.KEYS_PROPERTY) ||
                     RemoteEngineConstants.KEYS_PROPERTY.equals(propertyPath)) {
@@ -707,10 +705,6 @@ public class RemoteJsEngine implements JsEngine {
 
                 if (isProxy) {
                     responseBuilder.setProxyType(ProxyTypeResolver.getJsWrapperProxyType(value));
-                    if (value instanceof ProxyObject) {
-                        Object keys = ((ProxyObject) value).getMemberKeys();
-                        MemberKeyExtractor.extractTo(keys, responseBuilder);
-                    }
                 } else {
                     responseBuilder.setValue(Serializer.toProto(value));
                 }

@@ -78,7 +78,7 @@ public final class PropertyPathNavigator {
                 throw new IllegalStateException("Null encountered while navigating path at segment: " + part);
             }
 
-            // Edge case #12: __keys__ triggers member key enumeration
+            // __keys__ triggers member key enumeration
             if (RemoteEngineConstants.KEYS_PROPERTY.equals(part)) {
                 return getMemberKeys(current);
             }
