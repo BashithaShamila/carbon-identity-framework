@@ -32,6 +32,7 @@ import org.wso2.carbon.identity.application.authentication.framework.config.load
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JSExecutionSupervisor;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsBaseGraphBuilderFactory;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.JsGenericGraphBuilderFactory;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.graaljs.RemoteJsGraphBuilderProvider;
 import org.wso2.carbon.identity.application.authentication.framework.exception.FrameworkException;
 import org.wso2.carbon.identity.application.authentication.framework.handler.approles.ApplicationRolesResolver;
 import org.wso2.carbon.identity.application.authentication.framework.handler.claims.ClaimFilter;
@@ -127,6 +128,7 @@ public class FrameworkServiceDataHolder {
     private SecretResolveManager secretConfigManager;
     private UserDefinedAuthenticatorService userDefinedAuthenticatorService;
     private OrganizationDiscoveryHandler organizationDiscoveryHandler;
+    private RemoteJsGraphBuilderProvider remoteJsGraphBuilderProvider;
 
     private FrameworkServiceDataHolder() {
 
@@ -853,5 +855,15 @@ public class FrameworkServiceDataHolder {
     public void setOrganizationDiscoveryHandler(OrganizationDiscoveryHandler organizationDiscoveryHandler) {
 
         this.organizationDiscoveryHandler = organizationDiscoveryHandler;
+    }
+
+    public RemoteJsGraphBuilderProvider getRemoteJsGraphBuilderProvider() {
+
+        return remoteJsGraphBuilderProvider;
+    }
+
+    public void setRemoteJsGraphBuilderProvider(RemoteJsGraphBuilderProvider remoteJsGraphBuilderProvider) {
+
+        this.remoteJsGraphBuilderProvider = remoteJsGraphBuilderProvider;
     }
 }

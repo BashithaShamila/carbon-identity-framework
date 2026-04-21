@@ -254,8 +254,6 @@
                     <instructions>
                         <Bundle-SymbolicName>${project.artifactId}</Bundle-SymbolicName>
                         <Bundle-Name>${project.artifactId}</Bundle-Name>
-                        <Private-Package>org.wso2.carbon.identity.application.authentication.framework.internal,
-                        </Private-Package>
                         <Import-Package>
                             javax.xml.namespace,
                             javax.xml.stream,
@@ -304,9 +302,9 @@
                             org.wso2.carbon.identity.configuration.mgt.core; version="${carbon.identity.package.import.version.range}",
                             org.wso2.carbon.identity.configuration.mgt.core.exception; version="${carbon.identity.package.import.version.range}",
                             org.wso2.carbon.identity.configuration.mgt.core.model; version="${carbon.identity.package.import.version.range}",
-                            org.wso2.carbon.identity.role.v2.mgt.core; version="${carbon.identity.package.import.version.range}",
+                            org.wso2.carbon.identity.role.v2.mgt.core; version="${carbon.identity.package.import.version.range}"
                         </Import-Package>
-                        <Export-Package>!org.wso2.carbon.identity.application.authentication.framework.internal,
+                        <Export-Package>
                             org.wso2.carbon.identity.application.authentication.framework.*;
                             version="${carbon.identity.package.export.version}"
                         </Export-Package>
