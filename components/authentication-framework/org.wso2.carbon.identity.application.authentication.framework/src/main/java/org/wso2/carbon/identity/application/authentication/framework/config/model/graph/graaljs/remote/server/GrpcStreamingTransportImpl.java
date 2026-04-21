@@ -462,7 +462,7 @@ public class GrpcStreamingTransportImpl implements RemoteEngineTransport {
                             log.warn("[GrpcStreaming] Unexpected message type: " + message.getPayloadCase());
                     }
                 }
-                // All messages go into the queue — Thread A dispatches
+                // All messages go into the queue
                 messageQueue.offer(message);
             }
 

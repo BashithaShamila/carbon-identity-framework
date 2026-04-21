@@ -221,7 +221,7 @@ public class JsGraalGraphBuilderFactory implements JsGenericGraphBuilderFactory<
      */
     private boolean needsLocalContext(AuthenticationContext authenticationContext) {
 
-        return jsEngineRouter.resolveMode(authenticationContext) != JsGraalGraphEngineModeRouter.ExecutionMode.REMOTE;
+        return (jsEngineRouter.resolveMode(authenticationContext) != JsGraalGraphEngineModeRouter.ExecutionMode.REMOTE);
     }
 
     private void setJavascriptResourceLimit() {

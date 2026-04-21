@@ -886,10 +886,6 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                     startScriptExecutionMonitor(identifier, authenticationContext,
                             optionalScriptExecutionData.orElse(null));
 
-                    // Reset dynamicallyBuiltBaseNode before callback execution.
-                    // Each callback cycle starts with a clean slate, matching local mode
-                    // where dynamicallyBuiltBaseNode starts null at callback entry.
-                    // Thread A runs callbacks inline now, so we clear the ThreadLocal directly.
                     dynamicallyBuiltBaseNode.remove();
 
                     // Execute the callback function in the External with persisted bindings
@@ -903,7 +899,6 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                         result = evalResult.getResult();
 
                         // Re-persist updated bindings so next callback sees changes
-                        // (e.g., dynamicFlag set in step 1 callback is available in step 2)
                         Map<String, Object> updatedBindings = jsEngine.getBindings();
                         authenticationContext.setProperty("JS_BINDING_CURRENT_CONTEXT", updatedBindings);
                         if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
@@ -939,7 +934,7 @@ public class RemoteJsGraalGraphBuilder extends JsGraphBuilder {
                                 storeAuthScriptExecutionMonitorData(authenticationContext,
                                 scriptExecutionData));
 
-                // dynamicallyBuiltBaseNode is already on Thread A -- callbacks ran inline
+                // dynamicallyBuiltBaseNode is already on Thread -- callbacks ran inline
                 // via the message loop, so no cross-thread propagation is needed.
                 // canInfuse/infuse read the ThreadLocal directly.
                 AuthGraphNode executingNode = (AuthGraphNode) authenticationContext.getProperty(PROP_CURRENT_NODE);

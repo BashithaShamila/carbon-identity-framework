@@ -78,8 +78,6 @@ public class Serializer {
         return sessionProxyCache.get();
     }
 
-    // Proxy pattern detection delegated to ProxyTypeResolver.shouldUseProxyPattern()
-
     /**
      * Convert a Java object to Protocol Buffers SerializedValue.
      *

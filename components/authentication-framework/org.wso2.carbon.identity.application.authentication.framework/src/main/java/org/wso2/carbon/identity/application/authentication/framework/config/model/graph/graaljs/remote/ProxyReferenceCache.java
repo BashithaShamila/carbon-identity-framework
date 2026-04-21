@@ -57,7 +57,7 @@ class ProxyReferenceCache {
      * @param obj The object to store.
      * @return A unique reference ID.
      */
-    String storeObjectReference(Object obj) {
+    String storeHostReturnReference(Object obj) {
         String refId = UUID.randomUUID().toString();
         hostFunctionRefs.put(refId, obj);
         if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {

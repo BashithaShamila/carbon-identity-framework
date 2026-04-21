@@ -529,7 +529,7 @@ public class RemoteJsEngine implements JsEngine {
             // Serialize result: use proxy object for complex types, primitive serialization otherwise
             SerializedValue serializedResult;
             if (result != null && ProxyTypeResolver.isJsWrapperProxy(result)) {
-                String refId = proxyReferenceCache.storeObjectReference(result);
+                String refId = proxyReferenceCache.storeHostReturnReference(result);
                 String proxyType = ProxyTypeResolver.getJsWrapperProxyType(result);
                 if (JsGraalGraphEngineModeRouter.isTracingEnabled() && log.isDebugEnabled()) {
                     log.debug("[GrpcStreaming] Serializing complex result as proxy: type=" + proxyType +
